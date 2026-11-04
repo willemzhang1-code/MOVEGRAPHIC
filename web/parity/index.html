@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>RABBIT parity</title>
+    <link rel="icon" href="data:," />
+    <style>
+      body { font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; margin: 12px; background: #f4f3ef; color: #1c1c1f; }
+      .stage { display: flex; gap: 8px; }
+      canvas { background: #e8e6df; width: 360px; height: 360px; }
+      table { border-collapse: collapse; margin-top: 12px; font-variant-numeric: tabular-nums; }
+      td, th { padding: 2px 8px; border-bottom: 1px solid #ddd; text-align: left; }
+      .bad { color: #c0392b; font-weight: 600; }
+      .ok { color: #2f7d4f; }
+    </style>
+  </head>
+  <body>
+    <div class="stage"><canvas id="ref" width="360" height="360"></canvas><canvas id="ours" width="360" height="360"></canvas><canvas id="diff" width="360" height="360"></canvas></div>
+    <div id="status">loading…</div>
+    <table id="results"><thead><tr><th>example</th><th>animation</th><th>t</th><th>IoU</th><th>mean Δ</th><th>Δ&gt;40 px</th></tr></thead><tbody></tbody></table>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

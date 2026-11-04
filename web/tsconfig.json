@@ -26,6 +26,7 @@
     "runtime/src",
     "demo/src",
     "studio/src",
-    "vite.config.ts"
+    "vite.config.ts",
+    "parity/src"
   ]
 }

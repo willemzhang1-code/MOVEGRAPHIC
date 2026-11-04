@@ -313,10 +313,11 @@ impl Animation {
 
     /// Applies all channels with one alpha.
     pub fn apply(&self, sk: &mut Skeleton, time: f32, alpha: f32, blend: MixBlend) {
-        self.apply_curves(sk, time, blend, &|_| alpha);
-        if alpha > 0.0 {
+        // Attachments first: deform keys only apply to the attachment shown.
+        if alpha > 0.0 || blend == MixBlend::Setup {
             self.apply_discrete(sk, time, blend);
         }
+        self.apply_curves(sk, time, blend, &|_| alpha);
     }
 
     /// Applies numeric channels; `alpha_of` maps a channel's property ids to its alpha.

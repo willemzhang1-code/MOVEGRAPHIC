@@ -370,10 +370,11 @@ impl AnimationState {
         }
         let alpha = e.alpha * mix;
         let time = e.animation_time();
-        anim.apply_curves(sk, time, blend, &|_| alpha);
+        // Attachments first: deform keys only apply to the attachment shown.
         if alpha > 0.0 {
             anim.apply_discrete(sk, time, MixBlend::Replace);
         }
+        anim.apply_curves(sk, time, blend, &|_| alpha);
         self.fire_events(track, e, anim, time);
     }
 
@@ -396,10 +397,10 @@ impl AnimationState {
         let hold = from.alpha * own_mix;
         let fade = hold * (1.0 - to_mix);
         let time = from.animation_time();
-        anim.apply_curves(sk, time, blend, &|ids| if ids.iter().any(|i| to_props.contains(i)) { hold } else { fade });
         if to_mix < from.discrete_threshold {
             anim.apply_discrete(sk, time, MixBlend::Replace);
         }
+        anim.apply_curves(sk, time, blend, &|ids| if ids.iter().any(|i| to_props.contains(i)) { hold } else { fade });
         if to_mix < from.event_threshold {
             self.fire_events(track, from, anim, time);
         } else {
