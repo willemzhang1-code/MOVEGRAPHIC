@@ -1,8 +1,8 @@
 import { motionLibrary } from '../motions';
 import type { AnimDoc, Part, RigDoc } from '../doc';
 import { buildMesh, type Mesh } from './mesh';
-import { jointsFromLayers } from './hints';
-import { assignBones, computeWeights, resolveBones } from './rig';
+import { dangles, jointsFromLayers } from './hints';
+import { assignBones, computeWeights, resolveBones, toWorld, type BoneGeom } from './rig';
 import type { Source } from './source';
 import { TEMPLATES, type Pt, type TemplateId } from './templates';
 
@@ -56,6 +56,25 @@ export function guessJoints(src: Source, template: TemplateId): { joints: Record
   return hint ? { joints: hint.joints, groups: { ...g.groups, tail: hint.tail } } : g;
 }
 
+/** Two-bone physics chains for hair / cloth layers, hanging from head or chest. */
+function addDangles(bones: BoneGeom[], src: Source, joints: Record<string, Pt>) {
+  const head = bones.findIndex((b) => b.name === 'head');
+  const chest = bones.findIndex((b) => b.name === 'chest');
+  if (head < 0 || chest < 0) return;
+  const used = new Set<string>();
+  for (const d of dangles(src.parts, { head: joints.neck, chest: joints.chest })) {
+    const base = `dangle_${d.part.replace(/[^A-Za-z0-9\u4e00-\u9fff]+/g, '_')}`;
+    let name = base;
+    for (let k = 2; used.has(name); k++) name = `${base}_${k}`;
+    used.add(name);
+    const [a, m, e] = d.points.map((p) => toWorld(p, joints.ground));
+    const seg = (p: Pt, q: Pt) => ({ rotation: (Math.atan2(q.y - p.y, q.x - p.x) * 180) / Math.PI, length: Math.hypot(q.x - p.x, q.y - p.y) });
+    const first = bones.length;
+    bones.push({ name: `${name}_1`, parent: d.kind === 'hair' ? head : chest, x: a.x, y: a.y, ...seg(a, m), skin: true, physics: true });
+    bones.push({ name: `${name}_2`, parent: first, x: m.x, y: m.y, ...seg(m, e), skin: true, physics: true });
+  }
+}
+
 /** Full auto-rig: joints (guessed unless given), meshes, bones, weights, motions. */
 export function buildDoc(src: Source, o: RigOptions): RigDoc {
   const t = TEMPLATES[o.template];
@@ -64,6 +83,7 @@ export function buildDoc(src: Source, o: RigOptions): RigDoc {
   const groups = o.groups ?? guess?.groups ?? {};
   const spacing = Math.max(5, characterHeight(joints) / (o.density ?? DEFAULT_DENSITY));
   const bones = resolveBones(t, joints, groups);
+  if (src.parts.length > 1 && o.template === 'humanoid') addDangles(bones, src, joints);
   const allowed = src.parts.length > 1 ? assignBones(src.parts, bones, joints.ground) : [null];
   const parts: Part[] = src.parts.map((sp, i) => {
     const local = Math.min(spacing, Math.max(4, Math.min(sp.width, sp.height) / 3));

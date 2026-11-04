@@ -58,6 +58,8 @@ export interface RigDoc {
   pages: { width: number; height: number }[];
   bones: BoneGeom[];
   animations: AnimDoc[];
+  /** Secondary motion on tail / hair / cloth bones (default on). */
+  physics?: boolean;
 }
 
 export const vertexCount = (doc: RigDoc) => doc.parts.reduce((s, p) => s + p.mesh.points.length / 2, 0);
@@ -228,6 +230,11 @@ export function compile(doc: RigDoc, base = 'character'): { json: Record<string,
     bones: spineBones,
     slots: doc.parts.map((p) => ({ name: p.name, bone: 'root', attachment: p.name })),
     skins: [{ name: 'default', attachments }],
+    physics: doc.physics === false
+      ? []
+      : doc.bones
+          .filter((b) => b.physics)
+          .map((b) => ({ name: `physics_${b.name}`, bone: b.name, rotate: 1, inertia: 0.7, strength: 70, damping: 0.8, mass: 1, gravity: 0, mix: 1 })),
     animations,
   };
   const atlas = doc.pages

@@ -13,6 +13,8 @@ export interface BoneGeom {
   rotation: number;
   length: number;
   skin: boolean;
+  /** Simulated with a physics constraint (secondary motion). */
+  physics?: boolean;
 }
 
 export const toWorld = (p: Pt, ground: Pt): Pt => ({ x: p.x - ground.x, y: ground.y - p.y });
@@ -38,7 +40,7 @@ export function resolveBones(template: Template, joints: Record<string, Pt>, gro
       length = out[parent].length * (def.tip ?? 0.5);
     }
     index.set(def.name, out.length);
-    out.push({ name: def.name, parent, x: start.x, y: start.y, rotation, length, skin: def.skin !== false });
+    out.push({ name: def.name, parent, x: start.x, y: start.y, rotation, length, skin: def.skin !== false, physics: def.name.startsWith('tail') });
   }
   return out;
 }

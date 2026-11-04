@@ -4,10 +4,12 @@
 import type { SourcePart } from './source';
 import type { Pt, TemplateId } from './templates';
 
-type Kind = 'head' | 'torso' | 'arm' | 'leg' | 'tail';
+type Kind = 'head' | 'torso' | 'arm' | 'leg' | 'tail' | 'hair' | 'cloth';
 
 const PATTERNS: [Kind, RegExp][] = [
+  ['hair', /hair|bang|fringe|ponytail|braid|twin.?tail|头发|发|辫|刘海|马尾/i],
   ['tail', /tail|尾/i],
+  ['cloth', /cape|cloak|scarf|skirt|ribbon|tassel|sash|coat.?tail|披风|斗篷|围巾|裙|飘带|丝带|缎带|衣摆/i],
   ['head', /head|face|头|脸|首/i],
   ['arm', /arm|hand|fore|elbow|wrist|sleeve|手|臂|胳膊|袖/i],
   ['leg', /leg|thigh|shin|calf|foot|feet|knee|boot|shoe|腿|脚|足|膝|靴|鞋/i],
@@ -112,7 +114,7 @@ function sides(parts: SourcePart[], cx: number): [SourcePart[], SourcePart[]] {
  */
 export function jointsFromLayers(template: TemplateId, parts: SourcePart[], guess: Record<string, Pt>): { joints: Record<string, Pt>; tail: boolean } | null {
   if (template !== 'humanoid' || parts.length < 3) return null;
-  const by: Record<Kind, SourcePart[]> = { head: [], torso: [], arm: [], leg: [], tail: [] };
+  const by: Record<Kind, SourcePart[]> = { head: [], torso: [], arm: [], leg: [], tail: [], hair: [], cloth: [] };
   for (const p of parts) {
     const k = classify(p.name);
     if (k) by[k].push(p);
@@ -171,4 +173,28 @@ export function jointsFromLayers(template: TemplateId, parts: SourcePart[], gues
     j.tail_tip = tip;
   }
   return { joints: j, tail: !!tail };
+}
+
+/** Bone-space geometry of a dangle chain: start, middle, end (document space). */
+export interface Dangle {
+  part: string;
+  kind: 'hair' | 'cloth';
+  points: [Pt, Pt, Pt];
+}
+
+/** Hair / cloth layers become two-bone dangle chains hanging from their root end. */
+export function dangles(parts: SourcePart[], anchors: { head: Pt; chest: Pt }): Dangle[] {
+  const out: Dangle[] = [];
+  for (const p of parts) {
+    const k = classify(p.name);
+    if (k !== 'hair' && k !== 'cloth') continue;
+    const ax = axisOf([p]);
+    if (!ax || dist(ax.a, ax.b) < 8) continue;
+    const anchor = k === 'hair' ? anchors.head : anchors.chest;
+    // Root: the end nearer the anchor, but never the lower end of a hanging piece.
+    let [root, end] = dist(ax.a, anchor) < dist(ax.b, anchor) ? [ax.a, ax.b] : [ax.b, ax.a];
+    if (root.y > end.y + Math.abs(root.x - end.x)) [root, end] = [end, root];
+    out.push({ part: p.name, kind: k, points: [root, lerp(root, end, 0.5), end] });
+  }
+  return out;
 }

@@ -46,7 +46,10 @@ function capsule(put, ax, ay, bx, by, r, color) {
 }
 
 const GREEN = [124, 197, 118], SKIN = [240, 184, 120], FAR = [190, 150, 105], ORANGE = [227, 154, 79];
+const RED = [200, 60, 70], HAIR = [120, 80, 50];
 const layers = [
+  layer('cape', (p) => { for (let y = 300; y <= 640; y++) { const t = (y - 300) / 340; const half = 40 + 70 * t; for (let x = Math.round(250 - half); x <= 250 + half * 0.6; x++) p(x, y, Math.abs(x - (250 - half)) < 4 ? [120, 30, 40] : RED); } }),
+  layer('hair ponytail', (p) => capsule(p, 235, 175, 175, 330, 20, HAIR)),
   layer('tail', (p) => capsule(p, 225, 520, 95, 455, 16, ORANGE)),
   layer('arm far', (p) => { capsule(p, 255, 330, 195, 560, 18, FAR); ellipse(p, 192, 572, 22, 22, FAR); }),
   layer('leg far', (p) => { capsule(p, 275, 540, 255, 815, 24, FAR); ellipse(p, 275, 838, 46, 20, dark(FAR, 0.7)); }),

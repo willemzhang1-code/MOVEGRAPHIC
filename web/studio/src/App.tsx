@@ -414,6 +414,10 @@ export function App() {
                   <input type="checkbox" checked={!!doc.groups?.[g.id]} onChange={(e) => rerig({ groups: { ...doc.groups, [g.id]: e.target.checked }, keepMesh: true })} /> {g.label}
                 </label>
               ))}
+              <label className="check">
+                <input type="checkbox" checked={doc.physics !== false} onChange={(e) => commit({ ...doc, physics: e.target.checked })} /> Physics on tail / hair / cloth
+                {doc.bones.some((b) => b.physics) ? '' : ' (none found)'}
+              </label>
               <h3>Mesh</h3>
               <label className="field">
                 Density <output>{density}</output>
