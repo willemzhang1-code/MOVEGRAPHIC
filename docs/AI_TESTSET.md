@@ -52,3 +52,23 @@ Full-body 2D game character, entire body visible with margin, isolated on a plai
 | 结论 | 动画师判断"可直接进入动画环节" → 计为通过；目标 ≥ 70%（14/20） |
 
 生成结果放 `assets/ai-testset/`（PNG，按编号命名 `01.png` … `20.png`）。
+
+## 生成记录
+
+2026-11-04 用 Higgsfield `gpt_image_2_5`（quality high, 2k, 2:3，1360×2048）生成，20 张共 55 credits。
+Higgsfield job id（编号 → job）：
+
+```
+01 863b9485-d459-4f33-8dd1-cfde64543782   11 505fe567-0f9a-4ff5-b253-5b171634432d
+02 28318e7b-591e-4bd0-aafd-ede9b1265437   12 92b37964-39a1-494b-8937-5559b080e08b
+03 eb053b7a-0a50-446c-bf14-6c19f4644e32   13 92182aa6-7a44-493b-9541-3f0da0fd2acb
+04 4ca78237-16c4-4f9e-9d34-f84f704dc5c6   14 a9ee6b74-452e-40e5-b330-5af28b7f35dd
+05 03b46c2b-5bc2-4c94-98db-0698e9f668a9   15 ab28887e-6d1a-4af2-abb8-00017d8f6079
+06 2738ade3-b3b9-4eeb-99a7-4a596c83fb8c   16 78382a69-e5fd-431d-b346-0f08dfcd7b2c
+07 f99c16eb-bcb6-4007-8021-9e913e024caa   17 195cafb1-f421-4d0e-ace0-731dc3963b5c
+08 8f8b0159-78f5-4529-a016-1bf0ae56fa7b   18 31ac0b00-f357-4f8c-b2ae-3059654da51d
+09 4d250ced-04f0-4a01-a539-4137f41348cf   19 1e72205d-b9a2-47c5-8035-7c61cb2a3d0a
+10 557f26a1-54f7-40d2-9bdb-1a858e7c1937   20 9d03b716-c3f4-4e46-b50a-6ce0923c365b
+```
+
+原图 URL 见 `tools/ai-testset-urls.txt`（`node tools/fetch-ai-testset.mjs` 下载到 `assets/ai-testset/`）。
