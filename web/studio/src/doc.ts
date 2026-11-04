@@ -2,6 +2,7 @@
 
 import type { Mesh } from './autorig/mesh';
 import type { BoneGeom, Weights } from './autorig/rig';
+export type { Weights };
 import type { Pt, TemplateId } from './autorig/templates';
 
 export type Ease = 'linear' | 'smooth' | 'stepped';
@@ -28,18 +29,39 @@ export interface AnimDoc {
   channels: Channel[];
 }
 
+/** One drawable piece of the character (the whole cutout, or a PSD layer). */
+export interface Part {
+  name: string;
+  /** Top-left of the part image in document space (pixels, y down). */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Mesh with points in document space. */
+  mesh: Mesh;
+  weights: Weights;
+  page: number;
+  /** Where the part image sits in its texture page. */
+  region: { x: number; y: number; width: number; height: number };
+}
+
 export interface RigDoc {
   name: string;
   template: TemplateId;
+  /** Document (composite) size. */
   image: { width: number; height: number };
   joints: Record<string, Pt>;
   /** Enabled optional bone groups (e.g. tail). */
   groups: Record<string, boolean>;
-  mesh: Mesh;
+  /** Back to front. */
+  parts: Part[];
+  pages: { width: number; height: number }[];
   bones: BoneGeom[];
-  weights: Weights;
   animations: AnimDoc[];
 }
+
+export const vertexCount = (doc: RigDoc) => doc.parts.reduce((s, p) => s + p.mesh.points.length / 2, 0);
+export const triangleCount = (doc: RigDoc) => doc.parts.reduce((s, p) => s + p.mesh.triangles.length / 3, 0);
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const hex2 = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0');
@@ -110,8 +132,10 @@ function compileAnimation(doc: RigDoc, a: AnimDoc, H: number): object {
       }
       return f;
     });
-    if (ch.prop === 'color') (slots[ch.target] ??= {}).rgba = frames;
-    else (bones[ch.target] ??= {})[ch.prop] = frames;
+    if (ch.prop === 'color') {
+      const targets = doc.parts.some((p) => p.name === ch.target) ? [ch.target] : doc.parts.map((p) => p.name);
+      for (const t of targets) (slots[t] ??= {}).rgba = frames;
+    } else (bones[ch.target] ??= {})[ch.prop] = frames;
   }
   const out: Record<string, unknown> = {};
   if (Object.keys(bones).length) out.bones = bones;
@@ -125,10 +149,10 @@ function compileAnimation(doc: RigDoc, a: AnimDoc, H: number): object {
   return out;
 }
 
-export const PAGE = 'character.png';
+export const pageFile = (base: string, i: number) => (i === 0 ? `${base}.png` : `${base}-${i + 1}.png`);
 
 /** Compiles the document to Spine 4.2 JSON (object) and an atlas string. */
-export function compile(doc: RigDoc, page = PAGE): { json: Record<string, unknown>; atlas: string } {
+export function compile(doc: RigDoc, base = 'character'): { json: Record<string, unknown>; atlas: string } {
   const H = skeletonHeight(doc);
   const ground = doc.joints.ground;
   const spineBones = doc.bones.map((b) => {
@@ -151,25 +175,40 @@ export function compile(doc: RigDoc, page = PAGE): { json: Record<string, unknow
     return out;
   });
 
-  const { points, triangles, hull, edges } = doc.mesh;
-  const n = points.length / 2;
-  const uvs: number[] = [];
-  const vertices: number[] = [];
-  for (let v = 0; v < n; v++) {
-    const ix = points[v * 2];
-    const iy = points[v * 2 + 1];
-    uvs.push(r3(ix / doc.image.width), r3(iy / doc.image.height));
-    const wx = ix - ground.x;
-    const wy = ground.y - iy;
-    const infl = doc.weights[v]?.length ? doc.weights[v] : [[1, 1] as [number, number]];
-    vertices.push(infl.length);
-    for (const [bi, w] of infl) {
-      const b = doc.bones[bi];
-      const r = (b.rotation * Math.PI) / 180;
-      const dx = wx - b.x;
-      const dy = wy - b.y;
-      vertices.push(bi, r3(dx * Math.cos(r) + dy * Math.sin(r)), r3(-dx * Math.sin(r) + dy * Math.cos(r)), r3(w));
+  const attachments: Record<string, Record<string, object>> = {};
+  for (const part of doc.parts) {
+    const { points, triangles, hull, edges } = part.mesh;
+    const n = points.length / 2;
+    const uvs: number[] = [];
+    const vertices: number[] = [];
+    for (let v = 0; v < n; v++) {
+      const ix = points[v * 2];
+      const iy = points[v * 2 + 1];
+      uvs.push(r3((ix - part.x) / part.width), r3((iy - part.y) / part.height));
+      const wx = ix - ground.x;
+      const wy = ground.y - iy;
+      const infl = part.weights[v]?.length ? part.weights[v] : [[1, 1] as [number, number]];
+      vertices.push(infl.length);
+      for (const [bi, w] of infl) {
+        const b = doc.bones[bi];
+        const r = (b.rotation * Math.PI) / 180;
+        const dx = wx - b.x;
+        const dy = wy - b.y;
+        vertices.push(bi, r3(dx * Math.cos(r) + dy * Math.sin(r)), r3(-dx * Math.sin(r) + dy * Math.cos(r)), r3(w));
+      }
     }
+    attachments[part.name] = {
+      [part.name]: {
+        type: 'mesh',
+        uvs,
+        triangles: Array.from(triangles),
+        vertices,
+        hull,
+        edges: Array.from(edges).map((e) => e * 2),
+        width: part.width,
+        height: part.height,
+      },
+    };
   }
 
   const animations: Record<string, object> = {};
@@ -187,28 +226,18 @@ export function compile(doc: RigDoc, page = PAGE): { json: Record<string, unknow
       audio: '',
     },
     bones: spineBones,
-    slots: [{ name: 'body', bone: 'root', attachment: 'body' }],
-    skins: [
-      {
-        name: 'default',
-        attachments: {
-          body: {
-            body: {
-              type: 'mesh',
-              uvs,
-              triangles: Array.from(triangles),
-              vertices,
-              hull,
-              edges: Array.from(edges).map((e) => e * 2),
-              width: doc.image.width,
-              height: doc.image.height,
-            },
-          },
-        },
-      },
-    ],
+    slots: doc.parts.map((p) => ({ name: p.name, bone: 'root', attachment: p.name })),
+    skins: [{ name: 'default', attachments }],
     animations,
   };
-  const atlas = `${page}\nsize: ${doc.image.width}, ${doc.image.height}\nfilter: Linear, Linear\npma: false\nbody\n  bounds: 0, 0, ${doc.image.width}, ${doc.image.height}\n`;
+  const atlas = doc.pages
+    .map((pg, i) => {
+      let t = `${pageFile(base, i)}\nsize: ${pg.width}, ${pg.height}\nfilter: Linear, Linear\npma: false\n`;
+      for (const p of doc.parts.filter((q) => q.page === i)) {
+        t += `${p.name}\n  bounds: ${p.region.x}, ${p.region.y}, ${p.region.width}, ${p.region.height}\n`;
+      }
+      return t;
+    })
+    .join('\n');
   return { json, atlas };
 }

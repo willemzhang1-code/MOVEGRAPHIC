@@ -95,7 +95,7 @@ function humanoid(): AnimDoc[] {
       smooth('chest', 'rotate', [[0, 0], [0.08, 12], [0.4, 0]]),
       smooth('head', 'rotate', [[0, 0], [0.08, 15], [0.4, 0]]),
       smooth('hip', 'translate', [[0, 0, 0], [0.08, -0.03, 0], [0.4, 0, 0]]),
-      flash('body', 0.08, 0.4),
+      flash('*', 0.08, 0.4),
     ]),
     anim('die', 1.2, false, [
       smooth('root', 'rotate', [[0, 0], [0.25, 6], [0.8, 86], [1, 80], [1.2, 83]]),
@@ -150,7 +150,7 @@ function quadruped(): AnimDoc[] {
     anim('hit', 0.4, false, [
       smooth('head', 'rotate', [[0, 0], [0.08, 15], [0.4, 0]]),
       smooth('body', 'translate', [[0, 0, 0], [0.08, -0.03, 0], [0.4, 0, 0]]),
-      flash('body', 0.08, 0.4),
+      flash('*', 0.08, 0.4),
     ]),
   ];
 }
@@ -162,7 +162,7 @@ function blob(): AnimDoc[] {
       smooth('root', 'translate', [[0, 0, 0], [0.12, 0, 0], [0.4, 0, 0.25], [0.68, 0, 0], [0.8, 0, 0]]),
       smooth('body', 'scale', [[0, 1, 1], [0.12, 0.8, 1.15], [0.3, 1.15, 0.9], [0.68, 1, 1], [0.74, 0.85, 1.12], [0.8, 1, 1]]),
     ]),
-    anim('hit', 0.4, false, [smooth('body', 'scale', [[0, 1, 1], [0.08, 0.8, 1.2], [0.4, 1, 1]]), flash('body', 0.08, 0.4)]),
+    anim('hit', 0.4, false, [smooth('body', 'scale', [[0, 1, 1], [0.08, 0.8, 1.2], [0.4, 1, 1]]), flash('*', 0.08, 0.4)]),
   ];
 }
 

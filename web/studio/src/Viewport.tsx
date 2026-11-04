@@ -9,7 +9,7 @@ export type ViewMode = 'rig' | 'animate';
 interface Props {
   rt: SinewRuntime;
   doc: RigDoc;
-  texture: HTMLCanvasElement;
+  pages: HTMLCanvasElement[];
   mode: ViewMode;
   anim: string | null;
   playing: boolean;
@@ -41,8 +41,8 @@ export function Viewport(p: Props) {
   props.current = p;
   const state = useRef({
     renderer: null as SinewRenderer | null,
-    page: null as SinewTexture | null,
-    textureSource: null as HTMLCanvasElement | null,
+    textures: [] as SinewTexture[],
+    textureSources: [] as HTMLCanvasElement[],
     data: null as SkeletonData | null,
     inst: null as SkeletonInstance | null,
     anim: null as string | null,
@@ -65,14 +65,14 @@ export function Viewport(p: Props) {
     state.current.renderer = new SinewRenderer(gl);
   }, []);
 
-  // Texture.
+  // Textures.
   useEffect(() => {
     const s = state.current;
-    if (!s.renderer || s.textureSource === p.texture) return;
-    if (s.page) s.renderer.deleteTexture(s.page);
-    s.page = s.renderer.createTexture(p.texture, false);
-    s.textureSource = p.texture;
-  }, [p.texture]);
+    if (!s.renderer || (s.textureSources.length === p.pages.length && s.textureSources.every((c, i) => c === p.pages[i]))) return;
+    for (const t of s.textures) s.renderer.deleteTexture(t);
+    s.textures = p.pages.map((c) => s.renderer!.createTexture(c, false));
+    s.textureSources = p.pages;
+  }, [p.pages]);
 
   // Skeleton data from the compiled document.
   useEffect(() => {
@@ -179,7 +179,7 @@ export function Viewport(p: Props) {
     ctx.viewport(0, 0, w, h);
     ctx.clearColor(0, 0, 0, 0);
     ctx.clear(ctx.COLOR_BUFFER_BIT);
-    if (!r || !s.inst || !s.page) return;
+    if (!r || !s.inst || !s.textures.length) return;
 
     if (pr.playing && s.anim) {
       s.inst.update(dt * pr.speed);
@@ -195,7 +195,7 @@ export function Viewport(p: Props) {
     const view = s.inst.render();
     const verts = view.vertices.slice();
     const idx = view.indices.slice();
-    r.draw(view, [s.page]);
+    r.draw(view, s.textures);
     const bones = s.inst.boneWorld().slice();
 
     // Overlay.

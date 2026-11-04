@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SinewRuntime } from '@sinew/runtime';
-import { buildDoc, cutout, DEFAULT_DENSITY, TEMPLATES, type Cutout, type Pt, type TemplateId } from './autorig';
-import { compile, sampleChannel, type AnimDoc, type Channel, type RigDoc } from './doc';
+import { buildDoc, cutout, DEFAULT_DENSITY, guessJoints, sourceFromCutout, sourceFromProject, sourceFromPsd, TEMPLATES, type Pt, type Source, type TemplateId } from './autorig';
+import { compile, pageFile, sampleChannel, triangleCount, vertexCount, type AnimDoc, type Channel, type RigDoc } from './doc';
 import { motionLibrary } from './motions';
 import { Timeline } from './Timeline';
 import { Viewport } from './Viewport';
@@ -15,7 +15,10 @@ const STEPS: { id: Step; label: string }[] = [
   { id: 'export', label: '4 · Export' },
 ];
 
-const SAMPLES = [{ name: 'critter', url: '/samples/critter.png', template: 'humanoid' as TemplateId }];
+const SAMPLES = [
+  { name: 'critter', url: '/samples/critter.png', thumb: '/samples/critter.png' },
+  { name: 'layered PSD', url: '/samples/layered.psd', thumb: '/samples/layered-thumb.png' },
+];
 
 let runtimePromise: Promise<SinewRuntime> | null = null;
 const loadRuntime = () => (runtimePromise ??= SinewRuntime.load(new URL('/sinew.wasm', location.href)));
@@ -37,12 +40,18 @@ function download(blob: Blob, name: string) {
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'character';
 
-function serialize(doc: RigDoc, image: string) {
+function serialize(doc: RigDoc, pages: string[]) {
   return JSON.stringify({
     format: 'rabbit-project',
-    version: 1,
-    image,
-    doc: { ...doc, mesh: { ...doc.mesh, points: Array.from(doc.mesh.points), triangles: Array.from(doc.mesh.triangles), edges: Array.from(doc.mesh.edges) } },
+    version: 2,
+    pages,
+    doc: {
+      ...doc,
+      parts: doc.parts.map((p) => ({
+        ...p,
+        mesh: { ...p.mesh, points: Array.from(p.mesh.points), triangles: Array.from(p.mesh.triangles), edges: Array.from(p.mesh.edges) },
+      })),
+    },
   });
 }
 
@@ -51,21 +60,26 @@ function deserializeDoc(o: { doc: RigDoc }): RigDoc {
   return {
     ...d,
     groups: d.groups ?? {},
-    mesh: {
-      ...d.mesh,
-      points: Float32Array.from(d.mesh.points as unknown as number[]),
-      triangles: Uint32Array.from(d.mesh.triangles as unknown as number[]),
-      edges: Uint32Array.from(d.mesh.edges as unknown as number[]),
-    },
+    parts: d.parts.map((p) => ({
+      ...p,
+      mesh: {
+        ...p.mesh,
+        points: Float32Array.from(p.mesh.points as unknown as number[]),
+        triangles: Uint32Array.from(p.mesh.triangles as unknown as number[]),
+        edges: Uint32Array.from(p.mesh.edges as unknown as number[]),
+      },
+    })),
   };
 }
+
+const toPng = (c: HTMLCanvasElement) => new Promise<Uint8Array>((r) => c.toBlob(async (b) => r(new Uint8Array(await b!.arrayBuffer())), 'image/png'));
 
 export function App() {
   const [rt, setRt] = useState<SinewRuntime | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [step, setStep] = useState<Step>('import');
-  const [cut, setCut] = useState<Cutout | null>(null);
+  const [src, setSrc] = useState<Source | null>(null);
   const [doc, setDocState] = useState<RigDoc | null>(null);
   const [density, setDensity] = useState(DEFAULT_DENSITY);
   const [anim, setAnim] = useState<string>('idle');
@@ -112,17 +126,17 @@ export function App() {
   const current = useMemo(() => doc?.animations.find((a) => a.name === anim) ?? doc?.animations[0] ?? null, [doc, anim]);
 
   // ------------------------------------------------------------------ import
-  async function importImage(src: string, name: string, template: TemplateId = 'humanoid') {
+  async function importImage(url: string, name: string, template: TemplateId = 'humanoid') {
     setError(null);
     setBusy('Removing background and building the rig…');
     try {
       await new Promise((r) => setTimeout(r, 30));
-      const img = await loadImage(src);
-      const c = cutout(img, img.naturalWidth, img.naturalHeight);
-      const d = buildDoc(name, c, { template, density });
+      const img = await loadImage(url);
+      const source = sourceFromCutout(name, cutout(img, img.naturalWidth, img.naturalHeight));
+      const d = buildDoc(source, { template, density });
       undo.current = [];
       redo.current = [];
-      setCut(c);
+      setSrc(source);
       setDocState(d);
       setAnim('idle');
       setTime(0);
@@ -136,22 +150,42 @@ export function App() {
   }
 
   async function openFile(f: File) {
-    if (f.name.endsWith('.json')) {
-      try {
+    setError(null);
+    const lower = f.name.toLowerCase();
+    try {
+      if (lower.endsWith('.json')) {
         const o = JSON.parse(await f.text());
-        if (o.format !== 'rabbit-project') throw new Error('Not a RABBIT project file');
-        const img = await loadImage(o.image);
-        const c = cutout(img, img.naturalWidth, img.naturalHeight);
+        if (o.format !== 'rabbit-project' || !o.pages) throw new Error('Not a RABBIT project file (version 2)');
         const d = deserializeDoc(o);
+        const pages = await Promise.all((o.pages as string[]).map(loadImage));
         undo.current = [];
-        setCut(c);
+        redo.current = [];
+        setSrc(sourceFromProject(d, pages));
         setDocState(d);
         setAnim(d.animations[0]?.name ?? 'idle');
         setStep('animate');
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        return;
       }
+      if (lower.endsWith('.psd')) {
+        setBusy('Reading layers and building the rig…');
+        await new Promise((r) => setTimeout(r, 30));
+        const source = sourceFromPsd(f.name.replace(/\.[^.]+$/, ''), await f.arrayBuffer());
+        const d = buildDoc(source, { template: 'humanoid', density });
+        undo.current = [];
+        redo.current = [];
+        setSrc(source);
+        setDocState(d);
+        setAnim('idle');
+        setTime(0);
+        setPlaying(false);
+        setStep('rig');
+        return;
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
       return;
+    } finally {
+      setBusy(null);
     }
     const url = URL.createObjectURL(f);
     await importImage(url, f.name.replace(/\.[^.]+$/, ''));
@@ -159,15 +193,15 @@ export function App() {
 
   // ------------------------------------------------------------------ rig edits
   function rerig(o: { template?: TemplateId; joints?: Record<string, Pt>; groups?: Record<string, boolean>; density?: number; keepMesh?: boolean }) {
-    if (!doc || !cut) return;
+    if (!doc || !src) return;
     const template = o.template ?? doc.template;
     const sameTemplate = template === doc.template;
-    const next = buildDoc(doc.name, cut, {
+    const next = buildDoc({ ...src, name: doc.name }, {
       template,
       density: o.density ?? density,
       joints: o.joints ?? (sameTemplate ? doc.joints : undefined),
       groups: o.groups ?? (sameTemplate && !o.joints ? doc.groups : o.joints && sameTemplate ? doc.groups : undefined),
-      mesh: o.keepMesh ? doc.mesh : undefined,
+      meshes: o.keepMesh ? doc.parts.map((p) => p.mesh) : undefined,
       animations: sameTemplate ? doc.animations : motionLibrary(template),
     });
     commit(next);
@@ -218,17 +252,17 @@ export function App() {
 
   // ------------------------------------------------------------------ export
   async function exportSpine() {
-    if (!doc || !cut) return;
+    if (!doc || !src) return;
     const name = slug(doc.name);
-    const { json, atlas } = compile(doc, `${name}.png`);
-    const png = new Uint8Array(await (await new Promise<Blob>((r) => cut.canvas.toBlob((b) => r(b!), 'image/png'))).arrayBuffer());
-    const readme = `RABBIT export — ${doc.name}\n\nSpine 4.2 JSON skeleton + atlas + texture (straight alpha).\n\n- RABBIT runtime: loadSpine(json, atlas)\n- Spine runtimes 4.2 / Spine editor: Import Data → ${name}.json\n\nAnimations: ${doc.animations.map((a) => a.name).join(', ')}\n`;
+    const { json, atlas } = compile(doc, name);
+    const pngs = await Promise.all(src.pages.map(toPng));
+    const readme = `RABBIT export — ${doc.name}\n\nSpine 4.2 JSON skeleton + atlas + texture pages (straight alpha).\n\n- RABBIT runtime: loadSpine(json, atlas)\n- Spine runtimes 4.2 / Spine editor: Import Data → ${name}.json\n\nParts: ${doc.parts.length}\nAnimations: ${doc.animations.map((a) => a.name).join(', ')}\n`;
     download(
       zip([
         { name: `${name}/${name}.json`, data: JSON.stringify(json, null, 1) },
         { name: `${name}/${name}.atlas`, data: atlas },
-        { name: `${name}/${name}.png`, data: png },
-        { name: `${name}/${name}.rabbit.json`, data: serialize(doc, cut.canvas.toDataURL('image/png')) },
+        ...pngs.map((data, i) => ({ name: `${name}/${pageFile(name, i)}`, data })),
+        { name: `${name}/${name}.rabbit.json`, data: serialize(doc, src.pages.map((c) => c.toDataURL('image/png'))) },
         { name: `${name}/README.txt`, data: readme },
       ]),
       `${name}.zip`,
@@ -280,11 +314,11 @@ export function App() {
 
       <main className={`work ${step === 'animate' ? 'with-timeline' : ''}`}>
         <section className="stage">
-          {rt && doc && cut && step !== 'import' ? (
+          {rt && doc && src && step !== 'import' ? (
             <Viewport
               rt={rt}
               doc={doc}
-              texture={cut.canvas}
+              pages={src.pages}
               mode={step === 'rig' ? 'rig' : 'animate'}
               anim={current?.name ?? null}
               playing={playing}
@@ -315,15 +349,20 @@ export function App() {
             >
               <div className="drop-inner">
                 <h2>Drop a character image</h2>
-                <p>One full-body character on a plain or transparent background. PNG / JPG / WebP, or a .rabbit.json project.</p>
+                <p>One full-body character on a plain or transparent background (PNG / JPG / WebP), a layered PSD for best results, or a .rabbit.json project.</p>
                 <label className="button primary">
                   Choose file
-                  <input type="file" accept="image/*,.json" hidden onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} />
+                  <input type="file" accept="image/*,.psd,.json" hidden onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} />
                 </label>
                 <div className="samples">
                   {SAMPLES.map((s) => (
-                    <button key={s.name} onClick={() => importImage(s.url, s.name, s.template)}>
-                      <img src={s.url} alt="" />
+                    <button key={s.name} onClick={async () => {
+                      if (s.url.endsWith('.psd')) {
+                        const buf = await (await fetch(s.url)).arrayBuffer();
+                        await openFile(new File([buf], s.url.split('/').pop()!));
+                      } else await importImage(s.url, s.name);
+                    }}>
+                      <img src={s.thumb} alt="" />
                       Try “{s.name}”
                     </button>
                   ))}
@@ -341,7 +380,7 @@ export function App() {
             <>
               <h3>How it works</h3>
               <ol className="howto">
-                <li>The background is removed and a mesh is fitted to the silhouette.</li>
+                <li>The background is removed and a mesh is fitted to the silhouette. With a layered PSD, every layer gets its own mesh.</li>
                 <li>A skeleton template is placed on the character — drag joints to fix it.</li>
                 <li>Weights are computed automatically; pick motions from the library.</li>
                 <li>Tweak poses on the timeline and export to Spine 4.2 / RABBIT runtimes.</li>
@@ -365,8 +404,8 @@ export function App() {
               <p className="hint">Drag the dots onto the character's joints. Characters should face right.</p>
               <div className="row">
                 <button onClick={() => {
-                  if (!cut) return;
-                  const g = TEMPLATES[doc.template].guess(cut.mask, cut.width, cut.height);
+                  if (!src) return;
+                  const g = guessJoints(src, doc.template);
                   rerig({ joints: g.joints, groups: g.groups, keepMesh: true });
                 }}>Re-guess joints</button>
               </div>
@@ -384,7 +423,7 @@ export function App() {
                 <input type="checkbox" checked={showMesh} onChange={(e) => setShowMesh(e.target.checked)} /> Show mesh
               </label>
               <p className="stat">
-                {doc.mesh.points.length / 2} vertices · {doc.mesh.triangles.length / 3} triangles · {doc.bones.length} bones
+                {doc.parts.length > 1 ? `${doc.parts.length} layers · ` : ''}{vertexCount(doc)} vertices · {triangleCount(doc)} triangles · {doc.bones.length} bones
               </p>
               <h3>Test</h3>
               <div className="row wrap">
@@ -489,7 +528,7 @@ export function App() {
               </p>
               <h3>Contents</h3>
               <p className="stat">
-                {doc.bones.length} bones · 1 weighted mesh ({doc.mesh.points.length / 2} vertices) · {doc.animations.length} animations
+                {doc.bones.length} bones · {doc.parts.length} weighted mesh{doc.parts.length > 1 ? 'es' : ''} ({vertexCount(doc)} vertices) · {doc.animations.length} animations
               </p>
               <ul className="plain">
                 {doc.animations.map((a) => (
