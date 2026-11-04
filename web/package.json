@@ -1,0 +1,17 @@
+{
+  "name": "sinew-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm": "cd .. && cargo build -p sinew-ffi --release --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/sinew_ffi.wasm web/demo/public/sinew.wasm",
+    "gen": "node ../tools/gen-demo.mjs",
+    "dev": "npm run wasm && vite",
+    "build": "npm run wasm && tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

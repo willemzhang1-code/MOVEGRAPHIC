@@ -51,8 +51,8 @@ const bones = [
   { name: 'leg_near_shin', parent: 'leg_near_thigh', x: 58, length: 56 },
   { name: 'leg_near_foot', parent: 'root', x: 10, y: 10, length: 20 },
   { name: 'tail1', parent: 'hip', x: -30, rotation: 160, length: 45 },
-  { name: 'tail2', parent: 'tail1', x: 45, rotation: 15, length: 45 },
-  { name: 'tail3', parent: 'tail2', x: 45, rotation: 15, length: 45 },
+  { name: 'tail2', parent: 'tail1', x: 45, rotation: -18, length: 45 },
+  { name: 'tail3', parent: 'tail2', x: 45, rotation: -20, length: 45 },
 ];
 const boneIndex = Object.fromEntries(bones.map((b, i) => [b.name, i]));
 

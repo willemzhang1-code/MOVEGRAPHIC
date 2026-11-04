@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sinew Player</title>
+    <style>
+      :root {
+        --bg: #f4f3ef;
+        --stage: #e9e7e0;
+        --panel: #ffffff;
+        --text: #1d1d1f;
+        --muted: #6b6b70;
+        --line: #dcd9d0;
+        --accent: #2f7d4f;
+        --accent-ink: #ffffff;
+        --ground: #cfcbbf;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141416;
+          --stage: #1c1c1f;
+          --panel: #222226;
+          --text: #ececee;
+          --muted: #9a9aa2;
+          --line: #34343a;
+          --accent: #5fc489;
+          --accent-ink: #0d1a12;
+          --ground: #3a3a40;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+      .app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+      header {
+        display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+        padding: 12px 16px; border-bottom: 1px solid var(--line);
+      }
+      header h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
+      header span { color: var(--muted); font-size: 13px; }
+      main { display: grid; grid-template-columns: 1fr 300px; min-height: 0; }
+      .stage { position: relative; background: var(--stage); min-height: 360px; overflow: hidden; }
+      #view { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #ground { position: absolute; left: 0; right: 0; height: 2px; background: var(--ground); }
+      #error { position: absolute; left: 16px; top: 16px; color: #c0392b; white-space: pre-wrap; }
+      aside {
+        background: var(--panel); border-left: 1px solid var(--line);
+        padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;
+      }
+      section h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+      .row { display: flex; gap: 6px; flex-wrap: wrap; }
+      button {
+        font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line);
+        background: transparent; color: var(--text); cursor: pointer;
+      }
+      button:hover { border-color: var(--muted); }
+      button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+      kbd { font: 11px ui-monospace, monospace; color: var(--muted); margin-left: 4px; }
+      button.on kbd { color: inherit; opacity: 0.7; }
+      label.range { display: grid; grid-template-columns: 64px 1fr 52px; align-items: center; gap: 8px; margin: 4px 0; }
+      label.range output { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+      input[type=range] { width: 100%; accent-color: var(--accent); }
+      label.check { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+      select { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+      dl { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; margin: 0; font-variant-numeric: tabular-nums; }
+      dt { color: var(--muted); }
+      dd { margin: 0; text-align: right; }
+      ul#events { list-style: none; padding: 0; margin: 0; font: 12px ui-monospace, monospace; color: var(--muted); min-height: 1.5em; }
+      pre#warnings { margin: 0; font: 12px ui-monospace, monospace; color: var(--muted); white-space: pre-wrap; }
+      @media (max-width: 760px) {
+        main { grid-template-columns: 1fr; grid-template-rows: 55vh auto; }
+        aside { border-left: 0; border-top: 1px solid var(--line); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <h1>Sinew Player</h1>
+        <span>Rust/WASM core · Spine 4.x JSON import · WebGL2</span>
+        <span id="info"></span>
+      </header>
+      <main>
+        <div class="stage">
+          <div id="ground"></div>
+          <canvas id="view"></canvas>
+          <div id="error"></div>
+        </div>
+        <aside>
+          <section>
+            <h2>Track 0 · base</h2>
+            <div class="row">
+              <button data-base="idle">idle<kbd>1</kbd></button>
+              <button data-base="walk">walk<kbd>2</kbd></button>
+              <button id="jump">jump<kbd>space</kbd></button>
+            </div>
+          </section>
+          <section>
+            <h2>Track 1–2 · layers</h2>
+            <div class="row">
+              <button id="wave">wave<kbd>W</kbd></button>
+              <button id="hit">hit<kbd>H</kbd></button>
+            </div>
+          </section>
+          <section>
+            <h2>Playback</h2>
+            <label class="range">mix <input id="mix" type="range" min="0" max="1" step="0.05" value="0.25" /><output id="mix-v"></output></label>
+            <label class="range">speed <input id="speed" type="range" min="0.1" max="2" step="0.05" value="1" /><output id="speed-v"></output></label>
+            <label class="range">crowd <input id="crowd" type="range" min="1" max="300" step="1" value="1" /><output id="crowd-v"></output></label>
+          </section>
+          <section>
+            <h2>View</h2>
+            <label class="check">skin <select id="skin"></select></label>
+            <label class="check"><input id="bones" type="checkbox" /> bones <kbd>B</kbd></label>
+            <label class="check"><input id="flip" type="checkbox" /> flip X</label>
+          </section>
+          <section>
+            <h2>Stats</h2>
+            <dl>
+              <dt>fps</dt><dd id="stat-fps">–</dd>
+              <dt>core update + render</dt><dd id="stat-core">–</dd>
+              <dt>vertices</dt><dd id="stat-verts">–</dd>
+              <dt>draw calls</dt><dd id="stat-draws">–</dd>
+            </dl>
+          </section>
+          <section>
+            <h2>Events</h2>
+            <ul id="events"></ul>
+          </section>
+          <section>
+            <h2>Import warnings</h2>
+            <pre id="warnings"></pre>
+          </section>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
