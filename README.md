@@ -1,4 +1,4 @@
-# Spin
+# RABBIT
 
 面向独立团队的 2D 骨骼动画平台。产品形态见 [docs/PRODUCT.md](docs/PRODUCT.md)，架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

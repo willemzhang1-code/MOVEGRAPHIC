@@ -71,5 +71,5 @@ reset pose → setup
 
 - 依据：官方公开的 JSON / binary 格式文档、用户手册中描述的行为语义。
 - 不复制、不移植 Spine Runtimes 源码；不反编译 Spine 编辑器。
-- 数值一致性用对照测试衡量：用户本机用自有 Spine 授权与官方 runtime 渲染同一资源，与 Spin 输出做像素比对。
+- 数值一致性用对照测试衡量：用户本机用自有 Spine 授权与官方 runtime 渲染同一资源，与 RABBIT 输出做像素比对。
 - 公式在边界情况（非均匀缩放下的 IK、非 normal 继承模式）为独立推导，以对照测试结果迭代。

@@ -1,6 +1,6 @@
-# Spin — 产品形态定稿
+# RABBIT — 产品形态定稿
 
-> 品牌名暂定 **Spin**。代码内部标识符沿用代号 `sinew`（crate、C ABI 前缀 `sinew_`、TS 类名），品牌最终确定后一次性替换。
+> 品牌名暂定 **RABBIT**。代码内部标识符沿用代号 `sinew`（crate、C ABI 前缀 `sinew_`、TS 类名），品牌最终确定后一次性替换。
 
 ## 一句话
 
@@ -23,7 +23,7 @@
 
 ## 产品五层（终局形态）
 
-### 1. Spin Core — 单一求值内核（Rust）
+### 1. RABBIT Core — 单一求值内核（Rust）
 
 编辑器预览与游戏运行时是**同一份代码**，所见即所得由架构保证，而不是靠多语言移植对齐。
 
@@ -37,17 +37,17 @@
 - 渲染输出：双色 tint、PMA、混合模式、批次；后续 法线贴图 / 2D 光照 / 像素风旋转模式
 - 编译目标：WASM + 原生（C ABI），一份实现覆盖全部平台
 
-### 2. Spin Studio — 编辑器（Web 优先，Tauri 桌面版）
+### 2. RABBIT Studio — 编辑器（Web 优先，Tauri 桌面版）
 
 - **Rig 模式**：骨骼、Slot、Attachment、网格编辑、自动三角化、自动权重 + 权重笔刷、约束、Skin
 - **Animate 模式**：Dopesheet、曲线编辑器（每通道独立）、Ghosting/洋葱皮、自动 K 帧、音频轨
 - **Logic 模式**：状态机图编辑、Blend Tree、输入参数面板、实时试玩（键盘/手柄驱动预览）
 - **协作**：实时多人编辑（CRDT 文档）、版本历史、分支/合并、逐帧评论、分享链接预览
 - 导入：PSD（沿用 Spine 图层标签约定）、Aseprite、Spine JSON/skel、DragonBones（后期）
-- 导出：Spin 运行时格式、Spine JSON（子集，保证可回退）、PNG 序列 / GIF / 视频、Sprite Sheet
+- 导出：RABBIT 运行时格式、Spine JSON（子集，保证可回退）、PNG 序列 / GIF / 视频、Sprite Sheet
 - CLI：批量导出、CI 集成
 
-### 3. Spin AI — 生产加速（每一步产出普通可编辑数据）
+### 3. RABBIT AI — 生产加速（每一步产出普通可编辑数据）
 
 | 能力 | 输入 → 输出 |
 |---|---|
@@ -60,12 +60,12 @@
 
 原则：AI 不产出视频、不产出黑盒，只产出 Studio 里可继续编辑的骨骼、网格、关键帧。
 
-### 4. Spin Runtimes — 全部 MIT
+### 4. RABBIT Runtimes — 全部 MIT
 
 Web（TS + WASM）、Godot（GDExtension）、Unity（C# + native）、Unreal（C++ 插件）、Defold / Bevy / 原生 C。
 运行时不绑定编辑器授权 —— 这是对 Spine 最直接的结构性差异。
 
-### 5. Spin Hub — 云与市场
+### 5. RABBIT Hub — 云与市场
 
 - 项目云存储、版本、团队权限
 - **资产市场**：Rig 模板、动作包、角色、状态机模板（动作可跨角色复用后，市场才成立）
@@ -75,7 +75,7 @@ Web（TS + WASM）、Godot（GDExtension）、Unity（C# + native）、Unreal（
 
 ## 相对 Spine 的天花板决策
 
-| 维度 | Spine | Spin | 天花板差异 |
+| 维度 | Spine | RABBIT | 天花板差异 |
 |---|---|---|---|
 | 求值内核 | Java 参考实现 + 每语言手写移植 | 单一 Rust 内核 + C ABI / WASM | 新功能一次实现、全平台同步；编辑器 = 运行时 |
 | 动画通道 | 固定 timeline 类型 | 通用属性通道 | 任何新属性天然可动画 |
