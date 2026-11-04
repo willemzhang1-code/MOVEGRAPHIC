@@ -1,0 +1,89 @@
+{
+ "body_green": {
+  "w": 100,
+  "h": 140,
+  "shape": "body",
+  "fill": "#7cc576",
+  "stroke": "#2f5d2c"
+ },
+ "body_purple": {
+  "w": 100,
+  "h": 140,
+  "shape": "body",
+  "fill": "#a98ad8",
+  "stroke": "#4b3570"
+ },
+ "head_green": {
+  "w": 112,
+  "h": 100,
+  "shape": "head",
+  "fill": "#8fd488",
+  "stroke": "#2f5d2c"
+ },
+ "head_purple": {
+  "w": 112,
+  "h": 100,
+  "shape": "head",
+  "fill": "#bba0e6",
+  "stroke": "#4b3570"
+ },
+ "eye_open": {
+  "w": 20,
+  "h": 24,
+  "shape": "eye_open"
+ },
+ "eye_closed": {
+  "w": 20,
+  "h": 24,
+  "shape": "eye_closed"
+ },
+ "upper_arm": {
+  "w": 56,
+  "h": 24,
+  "shape": "capsule",
+  "fill": "#f0b878",
+  "stroke": "#8a5a2b"
+ },
+ "forearm": {
+  "w": 50,
+  "h": 20,
+  "shape": "capsule",
+  "fill": "#f0b878",
+  "stroke": "#8a5a2b"
+ },
+ "hand": {
+  "w": 26,
+  "h": 26,
+  "shape": "circle",
+  "fill": "#f0b878",
+  "stroke": "#8a5a2b"
+ },
+ "thigh": {
+  "w": 70,
+  "h": 30,
+  "shape": "capsule",
+  "fill": "#f0b878",
+  "stroke": "#8a5a2b"
+ },
+ "shin": {
+  "w": 66,
+  "h": 26,
+  "shape": "capsule",
+  "fill": "#f0b878",
+  "stroke": "#8a5a2b"
+ },
+ "foot": {
+  "w": 48,
+  "h": 22,
+  "shape": "foot",
+  "fill": "#6b4a2f",
+  "stroke": "#3a2614"
+ },
+ "tail": {
+  "w": 40,
+  "h": 160,
+  "shape": "tail",
+  "fill": "#e39a4f",
+  "stroke": "#8a5a2b"
+ }
+}

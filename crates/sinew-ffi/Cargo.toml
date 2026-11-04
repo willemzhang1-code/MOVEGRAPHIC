@@ -1,0 +1,11 @@
+[package]
+name = "sinew-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+sinew-core = { path = "../sinew-core" }

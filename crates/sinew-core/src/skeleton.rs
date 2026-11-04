@@ -1,0 +1,441 @@
+//! Skeleton instance: pose, world transforms and update order.
+
+use std::sync::Arc;
+
+use crate::constraints;
+use crate::math::{atan2_deg, Affine, Color, Transform, Vec2};
+use crate::model::{AttachmentRef, ConstraintRef, Inherit, SkeletonData, TransformMix};
+
+#[derive(Clone, Debug)]
+pub struct Bone {
+    /// Animated local transform.
+    pub pose: Transform,
+    /// Local transform after constraints.
+    pub applied: Transform,
+    pub inherit: Inherit,
+    pub world: Affine,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Slot {
+    pub color: Color,
+    pub dark: Option<Color>,
+    pub attachment: Option<AttachmentRef>,
+    /// Deform values for the current attachment; empty means setup vertices.
+    pub deform: Vec<f32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct IkConstraint {
+    pub mix: f32,
+    pub softness: f32,
+    pub bend_positive: bool,
+    pub compress: bool,
+    pub stretch: bool,
+    pub active: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TransformConstraint {
+    pub mix: TransformMix,
+    pub active: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateItem {
+    Bone(usize),
+    Constraint(ConstraintRef),
+}
+
+#[derive(Clone, Debug)]
+pub struct Skeleton {
+    pub data: Arc<SkeletonData>,
+    pub bones: Vec<Bone>,
+    pub slots: Vec<Slot>,
+    pub draw_order: Vec<usize>,
+    pub ik: Vec<IkConstraint>,
+    pub transforms: Vec<TransformConstraint>,
+    pub skin: Option<usize>,
+    pub x: f32,
+    pub y: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub color: Color,
+    cache: Vec<UpdateItem>,
+    children: Vec<Vec<usize>>,
+    pub(crate) scratch: Vec<f32>,
+}
+
+impl Skeleton {
+    pub fn new(data: Arc<SkeletonData>) -> Skeleton {
+        let mut children = vec![Vec::new(); data.bones.len()];
+        for (i, b) in data.bones.iter().enumerate() {
+            if let Some(p) = b.parent {
+                children[p].push(i);
+            }
+        }
+        let bones = data
+            .bones
+            .iter()
+            .map(|b| Bone { pose: b.setup, applied: b.setup, inherit: b.inherit, world: Affine::IDENTITY, active: true })
+            .collect();
+        let slots = data
+            .slots
+            .iter()
+            .map(|s| Slot { color: s.color, dark: s.dark, attachment: None, deform: Vec::new() })
+            .collect();
+        let ik = data
+            .ik
+            .iter()
+            .map(|c| IkConstraint {
+                mix: c.mix,
+                softness: c.softness,
+                bend_positive: c.bend_positive,
+                compress: c.compress,
+                stretch: c.stretch,
+                active: true,
+            })
+            .collect();
+        let transforms = data.transforms.iter().map(|c| TransformConstraint { mix: c.mix, active: true }).collect();
+        let mut sk = Skeleton {
+            draw_order: (0..data.slots.len()).collect(),
+            data,
+            bones,
+            slots,
+            ik,
+            transforms,
+            skin: None,
+            x: 0.0,
+            y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            color: Color::WHITE,
+            cache: Vec::new(),
+            children,
+            scratch: Vec::new(),
+        };
+        sk.update_cache();
+        sk.setup_pose();
+        sk
+    }
+
+    pub fn setup_pose(&mut self) {
+        self.setup_pose_bones();
+        self.setup_pose_slots();
+    }
+
+    pub fn setup_pose_bones(&mut self) {
+        let data = &self.data;
+        for (b, d) in self.bones.iter_mut().zip(&data.bones) {
+            b.pose = d.setup;
+            b.inherit = d.inherit;
+        }
+        for (c, d) in self.ik.iter_mut().zip(&data.ik) {
+            c.mix = d.mix;
+            c.softness = d.softness;
+            c.bend_positive = d.bend_positive;
+            c.compress = d.compress;
+            c.stretch = d.stretch;
+        }
+        for (c, d) in self.transforms.iter_mut().zip(&data.transforms) {
+            c.mix = d.mix;
+        }
+    }
+
+    pub fn setup_pose_slots(&mut self) {
+        self.reset_draw_order();
+        let data = self.data.clone();
+        for (i, d) in data.slots.iter().enumerate() {
+            let s = &mut self.slots[i];
+            s.color = d.color;
+            s.dark = d.dark;
+            self.set_attachment(i, d.attachment.as_deref());
+        }
+    }
+
+    pub fn reset_draw_order(&mut self) {
+        self.draw_order.clear();
+        self.draw_order.extend(0..self.slots.len());
+    }
+
+    /// Looks up an attachment by name in the current skin, then the default skin.
+    pub fn find_attachment(&self, slot: usize, name: &str) -> Option<AttachmentRef> {
+        for skin in [self.skin, self.data.default_skin].into_iter().flatten() {
+            if let Some(index) = self.data.skins[skin].find(slot, name) {
+                return Some(AttachmentRef { skin, index });
+            }
+        }
+        None
+    }
+
+    pub fn set_attachment(&mut self, slot: usize, name: Option<&str>) {
+        let r = name.and_then(|n| self.find_attachment(slot, n));
+        let s = &mut self.slots[slot];
+        if s.attachment != r {
+            let keep_deform = match (s.attachment, r) {
+                (Some(a), Some(b)) => self.data.attachment(a).deform_id == self.data.attachment(b).deform_id,
+                _ => false,
+            };
+            if !keep_deform {
+                s.deform.clear();
+            }
+            s.attachment = r;
+        }
+    }
+
+    /// Sets the skin by name (`None` clears it). Returns false if not found.
+    pub fn set_skin(&mut self, name: Option<&str>) -> bool {
+        let new = match name {
+            Some(n) => match self.data.find_skin(n) {
+                Some(i) => Some(i),
+                None => return false,
+            },
+            None => None,
+        };
+        if new == self.skin {
+            return true;
+        }
+        if let Some(ns) = new {
+            let data = self.data.clone();
+            for (i, slot) in self.slots.iter_mut().enumerate() {
+                let name = match (self.skin, slot.attachment) {
+                    (Some(_), Some(r)) => Some(data.attachment(r).name.as_str()),
+                    (None, _) => data.slots[i].attachment.as_deref(),
+                    _ => None,
+                };
+                if let Some(index) = name.and_then(|n| data.skins[ns].find(i, n)) {
+                    slot.attachment = Some(AttachmentRef { skin: ns, index });
+                    slot.deform.clear();
+                }
+            }
+        }
+        self.skin = new;
+        self.update_cache();
+        true
+    }
+
+    /// Rebuilds bone/constraint activity and the update order.
+    pub fn update_cache(&mut self) {
+        let data = self.data.clone();
+        let skin = self.skin.map(|s| &data.skins[s]);
+        for (i, b) in data.bones.iter().enumerate() {
+            let parent_active = b.parent.map_or(true, |p| self.bones[p].active);
+            let in_skin = !b.skin_required || skin.is_some_and(|s| s.bones.contains(&i));
+            self.bones[i].active = parent_active && in_skin;
+        }
+        for (i, c) in data.ik.iter().enumerate() {
+            let in_skin = !c.skin_required || skin.is_some_and(|s| s.ik.contains(&i));
+            let bones_active = self.bones[c.target].active && c.bones.iter().all(|&b| self.bones[b].active);
+            self.ik[i].active = in_skin && bones_active;
+        }
+        for (i, c) in data.transforms.iter().enumerate() {
+            let in_skin = !c.skin_required || skin.is_some_and(|s| s.transforms.contains(&i));
+            let bones_active = self.bones[c.target].active && c.bones.iter().all(|&b| self.bones[b].active);
+            self.transforms[i].active = in_skin && bones_active;
+        }
+
+        let mut sorted = vec![false; data.bones.len()];
+        let mut cache = Vec::new();
+        for c in data.constraint_order() {
+            let (active, target, constrained): (bool, usize, &[usize]) = match c {
+                ConstraintRef::Ik(i) => (self.ik[i].active, data.ik[i].target, &data.ik[i].bones),
+                ConstraintRef::Transform(i) => (self.transforms[i].active, data.transforms[i].target, &data.transforms[i].bones),
+            };
+            if !active {
+                continue;
+            }
+            self.ensure_sorted(target, &mut sorted, &mut cache);
+            for &b in constrained {
+                self.ensure_sorted(b, &mut sorted, &mut cache);
+            }
+            cache.push(UpdateItem::Constraint(c));
+            // Descendants must be recomputed after the constraint changes their parents.
+            for &b in constrained {
+                self.unsort_descendants(b, &mut sorted);
+            }
+        }
+        for i in 0..data.bones.len() {
+            self.ensure_sorted(i, &mut sorted, &mut cache);
+        }
+        self.cache = cache;
+    }
+
+    fn ensure_sorted(&self, bone: usize, sorted: &mut [bool], cache: &mut Vec<UpdateItem>) {
+        if sorted[bone] || !self.bones[bone].active {
+            return;
+        }
+        if let Some(p) = self.data.bones[bone].parent {
+            self.ensure_sorted(p, sorted, cache);
+        }
+        cache.push(UpdateItem::Bone(bone));
+        sorted[bone] = true;
+    }
+
+    fn unsort_descendants(&self, bone: usize, sorted: &mut [bool]) {
+        for &c in &self.children[bone] {
+            sorted[c] = false;
+            self.unsort_descendants(c, sorted);
+        }
+    }
+
+    pub fn update_order(&self) -> &[UpdateItem] {
+        &self.cache
+    }
+
+    /// Computes world transforms of all active bones, running constraints.
+    pub fn update_world(&mut self) {
+        for b in &mut self.bones {
+            b.applied = b.pose;
+        }
+        let cache = std::mem::take(&mut self.cache);
+        for item in &cache {
+            match *item {
+                UpdateItem::Bone(i) => self.update_bone_world(i),
+                UpdateItem::Constraint(ConstraintRef::Ik(i)) => constraints::apply_ik(self, i),
+                UpdateItem::Constraint(ConstraintRef::Transform(i)) => constraints::apply_transform(self, i),
+            }
+        }
+        self.cache = cache;
+    }
+
+    /// The skeleton's own transform, acting as the root bone's parent.
+    pub fn root_matrix(&self) -> Affine {
+        Affine { a: self.scale_x, b: 0.0, c: 0.0, d: self.scale_y, x: self.x, y: self.y }
+    }
+
+    pub fn parent_world(&self, bone: usize) -> Affine {
+        match self.data.bones[bone].parent {
+            Some(p) => self.bones[p].world,
+            None => self.root_matrix(),
+        }
+    }
+
+    /// Linear basis a bone's local matrix is multiplied by, given its
+    /// inherit mode: `world.linear = basis * local.linear`.
+    pub fn basis(&self, inherit: Inherit, parent: &Affine) -> Affine {
+        let (sx, sy) = (self.scale_x, self.scale_y);
+        match inherit {
+            Inherit::Normal => Affine::linear(parent.a, parent.b, parent.c, parent.d),
+            Inherit::OnlyTranslation => Affine::scaling(sx, sy),
+            _ => {
+                // Parent without the skeleton's own scale / flip.
+                let isx = if sx != 0.0 { 1.0 / sx } else { 0.0 };
+                let isy = if sy != 0.0 { 1.0 / sy } else { 0.0 };
+                let p = Affine::linear(parent.a * isx, parent.b * isx, parent.c * isy, parent.d * isy);
+                let len = p.scale_x();
+                let theta = if len > 1e-6 { atan2_deg(p.c, p.a) } else { atan2_deg(p.d, p.b) - 90.0 };
+                let r = Affine::rotation(theta);
+                let local = match inherit {
+                    Inherit::NoRotationOrReflection => {
+                        let other = if len > 1e-6 { p.det().abs() / len } else { p.scale_y() };
+                        r.mul_linear(&Affine::scaling(len, other)).mul_linear(&Affine::rotation(-theta))
+                    }
+                    Inherit::NoScale if p.det() < 0.0 => r.mul_linear(&Affine::scaling(1.0, -1.0)),
+                    _ => r,
+                };
+                Affine::scaling(sx, sy).mul_linear(&local)
+            }
+        }
+    }
+
+    /// World transform of one bone from its parent's world and applied pose.
+    pub fn update_bone_world(&mut self, i: usize) {
+        let parent = self.parent_world(i);
+        let bone = &self.bones[i];
+        let l = bone.applied.matrix();
+        let pos = parent.apply(Vec2::new(l.x, l.y));
+        let w = self.basis(bone.inherit, &parent).mul_linear(&l);
+        self.bones[i].world = Affine { a: w.a, b: w.b, c: w.c, d: w.d, x: pos.x, y: pos.y };
+    }
+
+    /// Recomputes a bone's applied local pose from its world transform.
+    pub fn world_to_applied(&mut self, i: usize) {
+        let parent = self.parent_world(i);
+        let w = self.bones[i].world;
+        let lp = parent.inverse().apply(w.position());
+        let l = self.basis(self.bones[i].inherit, &parent).inverse().mul_linear(&w);
+        self.bones[i].applied = Transform::from_matrix(&Affine { x: lp.x, y: lp.y, ..l });
+    }
+
+    /// World position of a bone's tip (origin + length along its x axis).
+    pub fn bone_tip(&self, i: usize) -> Vec2 {
+        self.bones[i].world.apply(Vec2::new(self.data.bones[i].length, 0.0))
+    }
+
+    pub fn find_bone(&self, name: &str) -> Option<usize> {
+        self.data.find_bone(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::BoneData;
+
+    fn bone(name: &str, parent: Option<usize>, setup: Transform, inherit: Inherit) -> BoneData {
+        BoneData { name: name.into(), parent, length: 10.0, setup, inherit, skin_required: false, color: Color::WHITE }
+    }
+
+    fn t(x: f32, y: f32, rot: f32, sx: f32, sy: f32) -> Transform {
+        Transform { x, y, rotation: rot, scale_x: sx, scale_y: sy, ..Default::default() }
+    }
+
+    fn close(a: Vec2, b: Vec2) -> bool {
+        (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3
+    }
+
+    #[test]
+    fn hierarchy_world_positions() {
+        let data = SkeletonData {
+            bones: vec![
+                bone("root", None, t(0.0, 0.0, 0.0, 1.0, 1.0), Inherit::Normal),
+                bone("a", Some(0), t(10.0, 0.0, 90.0, 1.0, 1.0), Inherit::Normal),
+                bone("b", Some(1), t(10.0, 0.0, 0.0, 1.0, 1.0), Inherit::Normal),
+            ],
+            ..Default::default()
+        };
+        let mut sk = Skeleton::new(Arc::new(data));
+        sk.update_world();
+        assert!(close(sk.bones[2].world.position(), Vec2::new(10.0, 10.0)));
+        assert!(close(sk.bone_tip(2), Vec2::new(10.0, 20.0)));
+        // Skeleton flip mirrors everything.
+        sk.scale_x = -1.0;
+        sk.update_world();
+        assert!(close(sk.bones[2].world.position(), Vec2::new(-10.0, 10.0)));
+    }
+
+    #[test]
+    fn inherit_modes() {
+        let data = SkeletonData {
+            bones: vec![
+                bone("root", None, t(0.0, 0.0, 30.0, 2.0, 2.0), Inherit::Normal),
+                bone("norot", Some(0), t(5.0, 0.0, 0.0, 1.0, 1.0), Inherit::NoRotationOrReflection),
+                bone("noscale", Some(0), t(5.0, 0.0, 0.0, 1.0, 1.0), Inherit::NoScale),
+                bone("onlyt", Some(0), t(5.0, 0.0, 0.0, 1.0, 1.0), Inherit::OnlyTranslation),
+            ],
+            ..Default::default()
+        };
+        let mut sk = Skeleton::new(Arc::new(data));
+        sk.update_world();
+        let norot = sk.bones[1].world;
+        assert!(norot.rotation_deg().abs() < 1e-3 && (norot.scale_x() - 2.0).abs() < 1e-3);
+        let noscale = sk.bones[2].world;
+        assert!((noscale.rotation_deg() - 30.0).abs() < 1e-3 && (noscale.scale_x() - 1.0).abs() < 1e-3);
+        let onlyt = sk.bones[3].world;
+        assert!(onlyt.rotation_deg().abs() < 1e-3 && (onlyt.scale_x() - 1.0).abs() < 1e-3);
+        // All are positioned by the parent's full transform.
+        let expected = Vec2::from_angle_deg(30.0, 10.0);
+        for i in 1..4 {
+            assert!(close(sk.bones[i].world.position(), expected));
+        }
+        // world_to_applied inverts update_bone_world.
+        for i in 1..4 {
+            let before = sk.bones[i].world;
+            sk.world_to_applied(i);
+            sk.update_bone_world(i);
+            let after = sk.bones[i].world;
+            assert!((before.a - after.a).abs() < 1e-3 && (before.d - after.d).abs() < 1e-3);
+        }
+    }
+}
