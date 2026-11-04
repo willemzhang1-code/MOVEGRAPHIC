@@ -47,8 +47,11 @@ pub fn ik_one(sk: &mut Skeleton, b: usize, target: Vec2, compress: bool, stretch
     sk.update_bone_world(b);
 }
 
-/// Two-bone IK solved in the parent bone's basis space (law of cosines),
-/// independent of child offsets from the parent's axis.
+/// Two-bone IK. Solved in the parent's basis space with the parent's scale
+/// taken into account: as the child rotates, its tip traces an ellipse
+/// (the child segment scaled by the parent's non-uniform scale); the solution
+/// is where that ellipse meets the circle of radius |target| around the
+/// parent's origin.
 #[allow(clippy::too_many_arguments)]
 pub fn ik_two(
     sk: &mut Skeleton,
@@ -63,48 +66,83 @@ pub fn ik_two(
 ) {
     let parent = sk.parent_world(p);
     let basis = sk.basis(sk.bones[p].inherit, &parent);
-    let inv = basis.inverse();
     let origin = sk.bones[p].world.position();
-    let to_local = |v: Vec2| inv.apply_vec(v.sub(origin));
-
-    let cw = sk.bones[c].world;
-    let cpos = to_local(cw.position());
-    let tip = to_local(cw.apply(Vec2::new(sk.data.bones[c].length, 0.0)));
-    let mut t = to_local(target);
-    let l1 = cpos.len();
-    let l2 = tip.sub(cpos).len();
-    let mut d = t.len();
-    if l1 < 1e-4 || l2 < 1e-4 || d < 1e-6 {
+    let t = basis.inverse().apply_vec(target.sub(origin));
+    let ap = sk.bones[p].applied;
+    let ac = sk.bones[c].applied;
+    let (sx, sy) = (ap.scale_x, ap.scale_y);
+    let l2 = sk.data.bones[c].length * ac.scale_x;
+    // Child origin and tip in the parent's (unrotated) scaled frame.
+    let center = Vec2::new(ac.x * sx, ac.y * sy);
+    let tip = |phi: f32| Vec2::new(center.x + sx * l2 * phi.cos(), center.y + sy * l2 * phi.sin());
+    if center.len() < 1e-4 || l2.abs() < 1e-4 {
         ik_one(sk, p, target, false, stretch, uniform, mix);
         return;
     }
-
-    let reach = l1 + l2;
+    let mut d = t.len();
+    if d < 1e-6 {
+        return;
+    }
+    // Reach range over the child's rotation.
+    const N: usize = 96;
+    let (mut min_r, mut max_r) = (f32::MAX, 0.0f32);
+    for k in 0..=N {
+        let r = tip(std::f32::consts::PI * 2.0 * k as f32 / N as f32).len();
+        min_r = min_r.min(r);
+        max_r = max_r.max(r);
+    }
     let mut scale = 1.0;
-    if stretch && d > reach {
-        scale = d / reach;
+    if stretch && d > max_r && max_r > 1e-4 {
+        scale = d / max_r;
+        d = max_r;
     } else if softness > 0.0 {
-        let start = reach - softness;
+        let start = max_r - softness;
         if d > start {
-            let soft = start + softness * (1.0 - (-(d - start) / softness).exp());
-            t = t.scale(soft / d);
-            d = soft;
+            d = start + softness * (1.0 - (-(d - start) / softness).exp());
         }
     }
-    let (l1s, l2s) = (l1 * scale, l2 * scale);
-
-    let ap = sk.bones[p].applied;
+    let d = d.clamp(min_r, max_r);
+    // Bend side: positive child rotation for bendPositive (mirrored by reflection).
     let mut bend = if bend_positive { 1.0 } else { -1.0 };
-    if ap.scale_x * ap.scale_y < 0.0 {
+    if sx * sy < 0.0 {
         bend = -bend;
     }
-    let cos_a = ((l1s * l1s + d * d - l2s * l2s) / (2.0 * l1s * d)).clamp(-1.0, 1.0);
-    let a = cos_a.acos() * RAD_TO_DEG;
-    let desired = t.angle_deg() - bend * a;
-    let delta = wrap_deg(desired - cpos.angle_deg());
+    let f = |phi: f32| tip(phi).len() - d;
+    let (lo, hi) = if bend > 0.0 { (0.0, std::f32::consts::PI) } else { (-std::f32::consts::PI, 0.0) };
+    // Root of f on the bend side: scan, then bisect; fall back to the closest sample.
+    let mut best = lo;
+    let mut best_err = f32::MAX;
+    let mut root = None;
+    let mut prev = (lo, f(lo));
+    for k in 1..=N {
+        let phi = lo + (hi - lo) * k as f32 / N as f32;
+        let v = f(phi);
+        if v.abs() < best_err {
+            best_err = v.abs();
+            best = phi;
+        }
+        if root.is_none() && (prev.1 <= 0.0) != (v <= 0.0) {
+            let (mut a, mut b) = (prev.0, phi);
+            let fa = prev.1;
+            for _ in 0..30 {
+                let m = 0.5 * (a + b);
+                if (f(m) <= 0.0) == (fa <= 0.0) {
+                    a = m;
+                } else {
+                    b = m;
+                }
+            }
+            root = Some(0.5 * (a + b));
+        }
+        prev = (phi, v);
+    }
+    let phi = root.unwrap_or(best);
+    let reach = tip(phi);
+    let theta = t.angle_deg() - reach.angle_deg();
     {
         let ap = &mut sk.bones[p].applied;
-        ap.rotation += delta * mix;
+        let cur = ap.rotation + ap.shear_x;
+        ap.rotation += wrap_deg(theta - cur) * mix;
         if scale != 1.0 {
             let s = (scale - 1.0) * mix + 1.0;
             ap.scale_x *= s;
@@ -113,11 +151,14 @@ pub fn ik_two(
             }
         }
     }
+    {
+        let acm = &mut sk.bones[c].applied;
+        let want = phi * RAD_TO_DEG;
+        let cur = acm.rotation + acm.shear_x;
+        acm.rotation += wrap_deg(want - cur) * mix;
+    }
     sk.update_bone_world(p);
     sk.update_bone_world(c);
-    // Child aims at the (possibly softened) target from its new position.
-    let soft_target = basis.apply_vec(t).add(origin);
-    ik_one(sk, c, soft_target, false, false, false, mix);
 }
 
 pub fn apply_transform(sk: &mut Skeleton, i: usize) {
@@ -213,6 +254,151 @@ pub fn apply_transform(sk: &mut Skeleton, i: usize) {
             w.d = sin_deg(ny) * s;
         }
         sk.bones[b].world = w;
+        sk.world_to_applied(b);
+    }
+}
+
+/// Arc-length sampled path in world space.
+struct PathSamples {
+    points: Vec<Vec2>,
+    /// Cumulative length at each point.
+    lengths: Vec<f32>,
+    closed: bool,
+}
+
+impl PathSamples {
+    fn total(&self) -> f32 {
+        *self.lengths.last().unwrap_or(&0.0)
+    }
+
+    /// Point and tangent angle (degrees) at arc length `d`. Open paths
+    /// continue straight past their ends; closed paths wrap.
+    fn at(&self, mut d: f32) -> (Vec2, f32) {
+        let n = self.points.len();
+        let total = self.total();
+        if n < 2 || total <= 1e-6 {
+            return (self.points.first().copied().unwrap_or(Vec2::ZERO), 0.0);
+        }
+        if self.closed {
+            d = d.rem_euclid(total);
+        } else if d < 0.0 {
+            let dir = self.points[1].sub(self.points[0]);
+            let a = dir.angle_deg();
+            return (self.points[0].add(Vec2::from_angle_deg(a, d)), a);
+        } else if d > total {
+            let dir = self.points[n - 1].sub(self.points[n - 2]);
+            let a = dir.angle_deg();
+            return (self.points[n - 1].add(Vec2::from_angle_deg(a, d - total)), a);
+        }
+        let i = self.lengths.partition_point(|&l| l < d).clamp(1, n - 1);
+        let (l0, l1) = (self.lengths[i - 1], self.lengths[i]);
+        let t = if l1 > l0 { (d - l0) / (l1 - l0) } else { 0.0 };
+        let a = self.points[i - 1];
+        let b = self.points[i];
+        (a.add(b.sub(a).scale(t)), b.sub(a).angle_deg())
+    }
+}
+
+fn sample_path(pts: &[Vec2], closed: bool) -> PathSamples {
+    let n = pts.len();
+    let curves = if closed { n / 3 } else { (n / 3).saturating_sub(1) };
+    let mut points = Vec::with_capacity(curves * 24 + 1);
+    let mut lengths = Vec::with_capacity(curves * 24 + 1);
+    let cubic = |p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32| {
+        let u = 1.0 - t;
+        let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+        Vec2::new(a * p0.x + b * p1.x + c * p2.x + d * p3.x, a * p0.y + b * p1.y + c * p2.y + d * p3.y)
+    };
+    let mut total = 0.0;
+    for c in 0..curves {
+        let p0 = pts[(3 * c + 1) % n];
+        let p1 = pts[(3 * c + 2) % n];
+        let p2 = pts[(3 * c + 3) % n];
+        let p3 = pts[(3 * c + 4) % n];
+        let start = if c == 0 { 0 } else { 1 };
+        for k in start..=24 {
+            let p = cubic(p0, p1, p2, p3, k as f32 / 24.0);
+            if let Some(&last) = points.last() {
+                total += p.sub(last).len();
+            }
+            points.push(p);
+            lengths.push(total);
+        }
+    }
+    PathSamples { points, lengths, closed }
+}
+
+/// Path constraint: bones follow a Bezier path attachment.
+pub fn apply_path(sk: &mut Skeleton, i: usize) {
+    use crate::model::{AttachmentKind, PositionMode, RotateMode, SpacingMode};
+    let c = sk.paths[i];
+    if c.mix_rotate == 0.0 && c.mix_x == 0.0 && c.mix_y == 0.0 {
+        return;
+    }
+    let data = sk.data.clone();
+    let d = &data.paths[i];
+    let Some(r) = sk.slots[d.target].attachment else { return };
+    let AttachmentKind::Path(path) = &data.attachment(r).kind else { return };
+    let mut pts = Vec::new();
+    crate::render::world_vertices(sk, d.target, &path.shape.vertices, path.shape.vertex_count, &mut pts);
+    let samples = sample_path(&pts, path.closed);
+    let total = samples.total();
+    if total <= 1e-6 {
+        return;
+    }
+    let nb = d.bones.len();
+    let bone_len = |sk: &Skeleton, b: usize| data.bones[b].length * sk.bones[b].world.scale_x();
+    let mut spaces = vec![0.0f32; nb];
+    match d.spacing_mode {
+        SpacingMode::Length => {
+            for (k, &b) in d.bones.iter().enumerate() {
+                spaces[k] = bone_len(sk, b) + c.spacing;
+            }
+        }
+        SpacingMode::Fixed => spaces.fill(c.spacing),
+        SpacingMode::Percent => spaces.fill(c.spacing * total),
+        SpacingMode::Proportional => {
+            let sum: f32 = d.bones.iter().map(|&b| bone_len(sk, b)).sum();
+            for (k, &b) in d.bones.iter().enumerate() {
+                spaces[k] = if sum > 0.0 { bone_len(sk, b) / sum * c.spacing * total } else { 0.0 };
+            }
+        }
+    }
+    let mut dist = match d.position_mode {
+        PositionMode::Percent => c.position * total,
+        PositionMode::Fixed => c.position,
+    };
+    for (k, &b) in d.bones.iter().enumerate() {
+        let (p, tangent) = samples.at(dist);
+        let next_dist = dist + spaces[k];
+        let mut w = sk.bones[b].world;
+        w.x += (p.x - w.x) * c.mix_x;
+        w.y += (p.y - w.y) * c.mix_y;
+        if c.mix_rotate > 0.0 {
+            let (next, _) = samples.at(next_dist);
+            let to_next = next.sub(p);
+            let angle = match d.rotate_mode {
+                RotateMode::Tangent => tangent,
+                _ if to_next.len() > 1e-4 => to_next.angle_deg(),
+                _ => tangent,
+            } + d.offset_rotation;
+            if d.rotate_mode == RotateMode::ChainScale {
+                let len = bone_len(sk, b);
+                if len > 1e-4 {
+                    let s = (to_next.len() / len - 1.0) * c.mix_rotate + 1.0;
+                    w.a *= s;
+                    w.c *= s;
+                }
+            }
+            let delta = wrap_deg(angle - w.rotation_deg()) * c.mix_rotate;
+            let rotated = Affine::rotation(delta).mul_linear(&w);
+            w = Affine { x: w.x, y: w.y, ..rotated };
+        }
+        sk.bones[b].world = w;
+        dist = next_dist;
+    }
+    // Local poses once every bone is placed (bones may be listed out of hierarchy order).
+    for &b in &d.bones {
         sk.world_to_applied(b);
     }
 }

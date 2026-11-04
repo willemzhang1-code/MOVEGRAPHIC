@@ -102,9 +102,7 @@ pub fn load_spine_json(text: &str) -> Result<SkeletonData, String> {
     read_slots(&mut cx, &root)?;
     read_ik(&mut cx, &root)?;
     read_transforms(&mut cx, &root)?;
-    if !arr(&root, "path").is_empty() {
-        cx.warn("path constraints are not supported yet (M1)");
-    }
+    read_paths(&mut cx, &root)?;
     read_physics(&mut cx, &root)?;
     read_skins(&mut cx, &root)?;
     read_events(&mut cx, &root);
@@ -234,6 +232,42 @@ fn read_transforms(cx: &mut Ctx, root: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn read_paths(cx: &mut Ctx, root: &Value) -> Result<(), String> {
+    for c in arr(root, "path") {
+        let name = string(c, "name").unwrap_or_default().to_string();
+        let ctx = format!("path constraint '{name}'");
+        let bones = bone_list(cx, c, &ctx)?;
+        let target = cx.slot(string(c, "target").unwrap_or_default(), &ctx)?;
+        let mix_x = num(c, "mixX", 1.0);
+        cx.data.paths.push(PathConstraintData {
+            name,
+            order: int(c, "order", 0) as i32,
+            skin_required: boolean(c, "skin", false),
+            bones,
+            target,
+            position_mode: if string(c, "positionMode") == Some("fixed") { PositionMode::Fixed } else { PositionMode::Percent },
+            spacing_mode: match string(c, "spacingMode") {
+                Some("fixed") => SpacingMode::Fixed,
+                Some("percent") => SpacingMode::Percent,
+                Some("proportional") => SpacingMode::Proportional,
+                _ => SpacingMode::Length,
+            },
+            rotate_mode: match string(c, "rotateMode") {
+                Some("chain") => RotateMode::Chain,
+                Some("chainScale") => RotateMode::ChainScale,
+                _ => RotateMode::Tangent,
+            },
+            offset_rotation: num(c, "rotation", 0.0),
+            position: num(c, "position", 0.0),
+            spacing: num(c, "spacing", 0.0),
+            mix_rotate: num(c, "mixRotate", 1.0),
+            mix_x,
+            mix_y: num(c, "mixY", mix_x),
+        });
+    }
+    Ok(())
+}
+
 fn read_physics(cx: &mut Ctx, root: &Value) -> Result<(), String> {
     for c in arr(root, "physics") {
         let name = string(c, "name").unwrap_or_default().to_string();
@@ -328,6 +362,11 @@ fn read_skins(cx: &mut Ctx, root: &Value) -> Result<(), String> {
         for c in arr(s, "physics") {
             if let Some(i) = c.as_str().and_then(|n| cx.data.find_physics(n)) {
                 skin.physics.push(i);
+            }
+        }
+        for c in arr(s, "path") {
+            if let Some(i) = c.as_str().and_then(|n| cx.data.find_path(n)) {
+                skin.paths.push(i);
             }
         }
         if let Some(slots) = obj(s, "attachments") {
@@ -637,8 +676,29 @@ fn read_animation(cx: &mut Ctx, name: &str, a: &Value) -> Result<Animation, Stri
         }
     }
 
-    if obj(a, "path").is_some_and(|o| !o.is_empty()) {
-        cx.warn("path timelines are not supported yet (M1)");
+    if let Some(paths) = obj(a, "path") {
+        for (cname, timelines) in paths {
+            let Some(i) = cx.data.find_path(cname) else {
+                cx.warn(format!("{ctx}: unknown path constraint '{cname}'"));
+                continue;
+            };
+            for (tl, frames) in timelines.as_object().into_iter().flatten() {
+                let frames = frames.as_array().map_or(&[][..], |v| v.as_slice());
+                let ch = match tl.as_str() {
+                    "position" => curve_channel(Property::PathPosition(i), frames, |f| vec![num(f, "value", 0.0)]),
+                    "spacing" => curve_channel(Property::PathSpacing(i), frames, |f| vec![num(f, "value", 0.0)]),
+                    "mix" => curve_channel(Property::PathMix(i), frames, |f| {
+                        let mx = num(f, "mixX", 1.0);
+                        vec![num(f, "mixRotate", 1.0), mx, num(f, "mixY", mx)]
+                    }),
+                    other => {
+                        cx.warn(format!("path timeline '{other}' is not supported yet"));
+                        continue;
+                    }
+                };
+                anim.curves.push(ch);
+            }
+        }
     }
     if let Some(phys) = obj(a, "physics") {
         for (cname, timelines) in phys {

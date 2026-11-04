@@ -48,6 +48,9 @@ async function main() {
   const only = params.get('only')?.split(',');
   const animFilter = params.get('anim');
   const tFilter = params.get('t');
+  const debugBones = params.get('bones')?.split(',') ?? [];
+  const debug: unknown[] = [];
+  (window as unknown as { __debug: unknown[] }).__debug = debug;
   const index: Entry[] = await (await fetch(`${DIR}/index.json`)).json();
   const rt = await SinewRuntime.load(new URL('/sinew.wasm', location.href));
 
@@ -128,6 +131,10 @@ async function main() {
         scene.drawSkeleton(sk, pma);
         scene.end();
         const a = read(refGl.gl);
+        const refBones = debugBones.map((n) => {
+          const b = sk.findBone(n);
+          return b ? [n, +b.worldX.toFixed(1), +b.worldY.toFixed(1), +b.getWorldRotationX().toFixed(1)] : [n, null];
+        });
 
         // RABBIT.
         const inst = data.createInstance();
@@ -140,6 +147,16 @@ async function main() {
         ourGl.clear(ourGl.COLOR_BUFFER_BIT);
         ours.begin(ortho(cx, cy, ppu, SIZE, SIZE));
         ours.draw(inst.render(), textures);
+        if (debugBones.length) {
+          const w = inst.boneWorld();
+          const ourBones = debugBones.map((n) => {
+            const i = data.bones.findIndex((b) => b.name === n);
+            if (i < 0) return [n, null];
+            const o = i * 7;
+            return [n, +w[o + 4].toFixed(1), +w[o + 5].toFixed(1), +((Math.atan2(w[o + 2], w[o]) * 180) / Math.PI).toFixed(1)];
+          });
+          debug.push({ example: e.name, anim: anim.name, t, ref: refBones, ours: ourBones });
+        }
         inst.dispose();
         const b = read(ourGl);
 

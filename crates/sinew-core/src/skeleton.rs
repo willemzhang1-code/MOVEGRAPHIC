@@ -42,6 +42,16 @@ pub struct TransformConstraint {
     pub active: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PathConstraint {
+    pub position: f32,
+    pub spacing: f32,
+    pub mix_rotate: f32,
+    pub mix_x: f32,
+    pub mix_y: f32,
+    pub active: bool,
+}
+
 /// Simulation state of a physics constraint. Offsets are applied on top of
 /// the bone's animated world transform.
 #[derive(Clone, Copy, Debug)]
@@ -95,6 +105,7 @@ pub struct Skeleton {
     pub ik: Vec<IkConstraint>,
     pub transforms: Vec<TransformConstraint>,
     pub physics: Vec<PhysicsConstraint>,
+    pub paths: Vec<PathConstraint>,
     pub skin: Option<usize>,
     pub x: f32,
     pub y: f32,
@@ -140,6 +151,11 @@ impl Skeleton {
             .collect();
         let transforms = data.transforms.iter().map(|c| TransformConstraint { mix: c.mix, active: true }).collect();
         let physics = data.physics.iter().map(|c| PhysicsConstraint::new(c.params)).collect();
+        let paths = data
+            .paths
+            .iter()
+            .map(|c| PathConstraint { position: c.position, spacing: c.spacing, mix_rotate: c.mix_rotate, mix_x: c.mix_x, mix_y: c.mix_y, active: true })
+            .collect();
         let mut sk = Skeleton {
             draw_order: (0..data.slots.len()).collect(),
             data,
@@ -148,6 +164,7 @@ impl Skeleton {
             ik,
             transforms,
             physics,
+            paths,
             skin: None,
             x: 0.0,
             y: 0.0,
@@ -187,6 +204,13 @@ impl Skeleton {
         }
         for (c, d) in self.physics.iter_mut().zip(&data.physics) {
             c.params = d.params;
+        }
+        for (c, d) in self.paths.iter_mut().zip(&data.paths) {
+            c.position = d.position;
+            c.spacing = d.spacing;
+            c.mix_rotate = d.mix_rotate;
+            c.mix_x = d.mix_x;
+            c.mix_y = d.mix_y;
         }
     }
 
@@ -292,6 +316,11 @@ impl Skeleton {
             let in_skin = !c.skin_required || skin.is_some_and(|s| s.physics.contains(&i));
             self.physics[i].active = in_skin && self.bones[c.bone].active;
         }
+        for (i, c) in data.paths.iter().enumerate() {
+            let in_skin = !c.skin_required || skin.is_some_and(|s| s.paths.contains(&i));
+            let bones_active = self.bones[data.slots[c.target].bone].active && c.bones.iter().all(|&b| self.bones[b].active);
+            self.paths[i].active = in_skin && bones_active;
+        }
 
         let mut sorted = vec![false; data.bones.len()];
         let mut cache = Vec::new();
@@ -304,6 +333,32 @@ impl Skeleton {
                     single = [data.physics[i].bone];
                     (self.physics[i].active, data.physics[i].bone, &single[..])
                 }
+                ConstraintRef::Path(i) => {
+                    let d = &data.paths[i];
+                    if self.paths[i].active {
+                        // The path's own bones (weighted path attachments) come first.
+                        for skin in &data.skins {
+                            for (slot, att) in &skin.attachments {
+                                if *slot != d.target {
+                                    continue;
+                                }
+                                if let crate::model::AttachmentKind::Path(p) = &att.kind {
+                                    if let crate::model::Vertices::Weighted { bones, .. } = &p.shape.vertices {
+                                        let mut k = 0;
+                                        while k < bones.len() {
+                                            let n = bones[k] as usize;
+                                            for &b in &bones[k + 1..k + 1 + n] {
+                                                self.ensure_sorted(b as usize, &mut sorted, &mut cache);
+                                            }
+                                            k += n + 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    (self.paths[i].active, data.slots[d.target].bone, &d.bones[..])
+                }
             };
             if !active {
                 continue;
@@ -313,9 +368,13 @@ impl Skeleton {
                 self.ensure_sorted(b, &mut sorted, &mut cache);
             }
             cache.push(UpdateItem::Constraint(c));
-            // Descendants must be recomputed after the constraint changes their parents.
+            // Descendants must be recomputed after the constraint changes their
+            // parents; the constrained bones themselves are set by the constraint.
             for &b in constrained {
                 self.unsort_descendants(b, &mut sorted);
+            }
+            for &b in constrained {
+                sorted[b] = true;
             }
         }
         for i in 0..data.bones.len() {
@@ -358,6 +417,7 @@ impl Skeleton {
                 UpdateItem::Constraint(ConstraintRef::Ik(i)) => constraints::apply_ik(self, i),
                 UpdateItem::Constraint(ConstraintRef::Transform(i)) => constraints::apply_transform(self, i),
                 UpdateItem::Constraint(ConstraintRef::Physics(i)) => constraints::apply_physics(self, i),
+                UpdateItem::Constraint(ConstraintRef::Path(i)) => constraints::apply_path(self, i),
             }
         }
         self.cache = cache;

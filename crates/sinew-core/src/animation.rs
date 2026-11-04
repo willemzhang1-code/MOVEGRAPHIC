@@ -51,6 +51,10 @@ pub enum Property {
     /// 5 gravity, 6 mix) of one constraint, or of all constraints with that
     /// parameter marked global when `constraint == usize::MAX`.
     Physics { constraint: usize, param: u8 },
+    PathPosition(usize),
+    PathSpacing(usize),
+    /// mixRotate, mixX, mixY.
+    PathMix(usize),
 }
 
 pub const PHYSICS_GLOBAL: usize = usize::MAX;
@@ -73,6 +77,9 @@ pub mod prop_kind {
     pub const DRAW_ORDER: u64 = 15;
     pub const INHERIT: u64 = 16;
     pub const PHYSICS: u64 = 17;
+    pub const PATH_POSITION: u64 = 18;
+    pub const PATH_SPACING: u64 = 19;
+    pub const PATH_MIX: u64 = 20;
 }
 
 /// Identifies one scalar-ish animatable property, used to decide which
@@ -91,6 +98,7 @@ impl Property {
             Property::SlotRgba2(_) => 7,
             Property::SlotRgb2(_) => 6,
             Property::Transform(_) => 6,
+            Property::PathMix(_) => 3,
             Property::Deform { .. } => 0,
             _ => 1,
         }
@@ -118,6 +126,9 @@ impl Property {
             Property::Transform(i) => vec![prop_id(TRANSFORM, i, 0)],
             Property::Deform { slot, attachment } => vec![prop_id(DEFORM, slot, attachment)],
             Property::Physics { constraint, param } => vec![prop_id(PHYSICS, constraint & 0xFF_FFFF, param as u32)],
+            Property::PathPosition(i) => vec![prop_id(PATH_POSITION, i, 0)],
+            Property::PathSpacing(i) => vec![prop_id(PATH_SPACING, i, 0)],
+            Property::PathMix(i) => vec![prop_id(PATH_MIX, i, 0)],
         }
     }
 }
@@ -533,6 +544,22 @@ fn apply_curve_channel(ch: &CurveChannel, sk: &mut Skeleton, time: f32, alpha: f
                 *cur = blend_abs(*cur, setup, value, alpha, blend);
             }
         }
+        Property::PathPosition(i) => {
+            let s0 = sk.data.paths[i].position;
+            sk.paths[i].position = blend_abs(sk.paths[i].position, s0, v[0], alpha, blend);
+        }
+        Property::PathSpacing(i) => {
+            let s0 = sk.data.paths[i].spacing;
+            sk.paths[i].spacing = blend_abs(sk.paths[i].spacing, s0, v[0], alpha, blend);
+        }
+        Property::PathMix(i) => {
+            let d = &sk.data.paths[i];
+            let (r0, x0, y0) = (d.mix_rotate, d.mix_x, d.mix_y);
+            let c = &mut sk.paths[i];
+            c.mix_rotate = blend_abs(c.mix_rotate, r0, v[0], alpha, blend);
+            c.mix_x = blend_abs(c.mix_x, x0, v[1], alpha, blend);
+            c.mix_y = blend_abs(c.mix_y, y0, v[2], alpha, blend);
+        }
         Property::Deform { .. } => unreachable!(),
     }
 }
@@ -614,6 +641,16 @@ fn reset_property(sk: &mut Skeleton, p: Property) {
         }
         Property::Transform(i) => sk.transforms[i].mix = sk.data.transforms[i].mix,
         Property::Deform { slot, .. } => sk.slots[slot].deform.clear(),
+        Property::PathPosition(i) => sk.paths[i].position = sk.data.paths[i].position,
+        Property::PathSpacing(i) => sk.paths[i].spacing = sk.data.paths[i].spacing,
+        Property::PathMix(i) => {
+            let d = &sk.data.paths[i];
+            let (r0, x0, y0) = (d.mix_rotate, d.mix_x, d.mix_y);
+            let c = &mut sk.paths[i];
+            c.mix_rotate = r0;
+            c.mix_x = x0;
+            c.mix_y = y0;
+        }
         Property::Physics { constraint, .. } => {
             let data = sk.data.clone();
             for (i, d) in data.physics.iter().enumerate() {

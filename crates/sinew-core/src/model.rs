@@ -307,6 +307,7 @@ pub struct Skin {
     pub ik: Vec<usize>,
     pub transforms: Vec<usize>,
     pub physics: Vec<usize>,
+    pub paths: Vec<usize>,
 }
 
 impl Skin {
@@ -378,6 +379,46 @@ pub struct TransformConstraintData {
     pub relative: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PositionMode {
+    Fixed,
+    Percent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpacingMode {
+    Length,
+    Fixed,
+    Percent,
+    Proportional,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RotateMode {
+    Tangent,
+    Chain,
+    ChainScale,
+}
+
+#[derive(Clone, Debug)]
+pub struct PathConstraintData {
+    pub name: String,
+    pub order: i32,
+    pub skin_required: bool,
+    pub bones: Vec<usize>,
+    /// Slot whose attachment is the path.
+    pub target: usize,
+    pub position_mode: PositionMode,
+    pub spacing_mode: SpacingMode,
+    pub rotate_mode: RotateMode,
+    pub offset_rotation: f32,
+    pub position: f32,
+    pub spacing: f32,
+    pub mix_rotate: f32,
+    pub mix_x: f32,
+    pub mix_y: f32,
+}
+
 /// Physics parameters that animations (and the skeleton-wide "global"
 /// timelines) can drive.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -436,6 +477,7 @@ pub struct AttachmentRef {
 pub enum ConstraintRef {
     Ik(usize),
     Transform(usize),
+    Path(usize),
     Physics(usize),
 }
 
@@ -455,6 +497,7 @@ pub struct SkeletonData {
     pub ik: Vec<IkConstraintData>,
     pub transforms: Vec<TransformConstraintData>,
     pub physics: Vec<PhysicsConstraintData>,
+    pub paths: Vec<PathConstraintData>,
     pub events: Vec<EventData>,
     pub animations: Vec<Animation>,
     /// Non-fatal issues found while loading (unsupported features etc).
@@ -484,6 +527,9 @@ impl SkeletonData {
     pub fn find_ik(&self, name: &str) -> Option<usize> {
         self.ik.iter().position(|c| c.name == name)
     }
+    pub fn find_path(&self, name: &str) -> Option<usize> {
+        self.paths.iter().position(|c| c.name == name)
+    }
     pub fn find_physics(&self, name: &str) -> Option<usize> {
         self.physics.iter().position(|c| c.name == name)
     }
@@ -496,6 +542,7 @@ impl SkeletonData {
         let mut v: Vec<(i32, ConstraintRef)> = Vec::new();
         v.extend(self.ik.iter().enumerate().map(|(i, c)| (c.order, ConstraintRef::Ik(i))));
         v.extend(self.transforms.iter().enumerate().map(|(i, c)| (c.order, ConstraintRef::Transform(i))));
+        v.extend(self.paths.iter().enumerate().map(|(i, c)| (c.order, ConstraintRef::Path(i))));
         v.extend(self.physics.iter().enumerate().map(|(i, c)| (c.order, ConstraintRef::Physics(i))));
         v.sort_by_key(|(o, _)| *o);
         v.into_iter().map(|(_, c)| c).collect()
