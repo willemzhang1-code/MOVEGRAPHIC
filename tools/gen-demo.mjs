@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const OUT = path.resolve(import.meta.dirname, '../web/demo/public/assets');
+const OUT = path.resolve(import.meta.dirname, '../web/public/assets');
 const r3 = (v) => Math.round(v * 1000) / 1000;
 
 // ------------------------------------------------------------------ parts

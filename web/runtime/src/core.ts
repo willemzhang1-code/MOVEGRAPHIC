@@ -30,6 +30,8 @@ interface Exports {
   sinew_instance_set_track_alpha(i: number, track: number, alpha: number): void;
   sinew_instance_set_track_additive(i: number, track: number, additive: number): void;
   sinew_instance_set_time_scale(i: number, scale: number): void;
+  sinew_instance_seek(i: number, track: number, time: number): void;
+  sinew_instance_track_time(i: number, track: number): number;
   sinew_instance_update(i: number, dt: number): void;
   sinew_instance_render(i: number): number;
   sinew_instance_vertices(i: number, outLen: number): number;
@@ -272,6 +274,16 @@ export class SkeletonInstance {
 
   setTimeScale(scale: number): void {
     this.x.sinew_instance_set_time_scale(this.ptr, scale);
+  }
+
+  /** Jumps a track to `time` seconds; call `update(0)` to pose. */
+  seek(track: number, time: number): void {
+    this.x.sinew_instance_seek(this.ptr, track, time);
+  }
+
+  /** Track time in seconds, or -1 when the track is empty. */
+  trackTime(track: number): number {
+    return this.x.sinew_instance_track_time(this.ptr, track);
   }
 
   /** Advances time, applies animations and constraints. */

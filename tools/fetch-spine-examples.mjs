@@ -9,7 +9,7 @@ import path from 'node:path';
 
 const branch = process.argv[2] ?? '4.2';
 const BASE = `https://raw.githubusercontent.com/EsotericSoftware/spine-runtimes/${branch}/examples`;
-const OUT = path.resolve(import.meta.dirname, '../web/demo/public/examples', branch);
+const OUT = path.resolve(import.meta.dirname, '../web/public/examples', branch);
 const NAMES = [
   'spineboy', 'raptor', 'goblins', 'tank', 'vine', 'stretchyman', 'owl', 'mix-and-match', 'coin',
   'celestial-circus', 'cloud-pot', 'sack', 'snowglobe', 'dragon', 'hero', 'powerup', 'speedy',

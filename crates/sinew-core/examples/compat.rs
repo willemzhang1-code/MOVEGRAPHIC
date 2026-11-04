@@ -2,7 +2,7 @@
 //! tools/fetch-spine-examples.mjs): import, bind atlas, play every animation,
 //! check output sanity.
 //!
-//!   cargo run --release -p sinew-core --example compat -- web/demo/public/examples/4.2
+//!   cargo run --release -p sinew-core --example compat -- web/public/examples/4.2
 
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use sinew_core::import::load_spine_json;
 use sinew_core::{AnimationState, Atlas, RenderBuffers, Skeleton};
 
 fn main() {
-    let dir = std::env::args().nth(1).unwrap_or_else(|| "web/demo/public/examples/4.2".into());
+    let dir = std::env::args().nth(1).unwrap_or_else(|| "web/public/examples/4.2".into());
     let index: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(format!("{dir}/index.json")).expect("index.json")).unwrap();
     let mut failures = 0;
     for e in index.as_array().unwrap() {

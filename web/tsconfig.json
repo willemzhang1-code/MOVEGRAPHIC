@@ -3,13 +3,29 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "strict": true,
     "noEmit": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "types": ["vite/client"],
-    "paths": { "@sinew/runtime": ["./runtime/src/index.ts"] }
+    "types": [
+      "vite/client"
+    ],
+    "paths": {
+      "@sinew/runtime": [
+        "./runtime/src/index.ts"
+      ]
+    },
+    "jsx": "react-jsx"
   },
-  "include": ["runtime/src", "demo/src", "vite.config.ts"]
+  "include": [
+    "runtime/src",
+    "demo/src",
+    "studio/src",
+    "vite.config.ts"
+  ]
 }

@@ -27,7 +27,7 @@ interface Loaded {
   isDemo: boolean;
 }
 
-const EXAMPLES_DIR = 'examples/4.2';
+const EXAMPLES_DIR = '/examples/4.2';
 const DEMO_ID = 'critter (demo)';
 
 async function loadImage(url: string): Promise<HTMLImageElement> {
@@ -44,7 +44,7 @@ function pickSkin(d: SkeletonData): string {
 }
 
 async function main() {
-  const rt = await SinewRuntime.load(new URL('sinew.wasm', document.baseURI));
+  const rt = await SinewRuntime.load(new URL('/sinew.wasm', location.href));
   const canvas = $<HTMLCanvasElement>('#view');
   const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: true });
   if (!gl) throw new Error('WebGL2 is not available');
@@ -81,8 +81,8 @@ async function main() {
   async function load(id: string): Promise<Loaded> {
     if (id === DEMO_ID) {
       const [json, parts] = await Promise.all([
-        fetch('assets/critter.json').then((r) => r.text()),
-        fetch('assets/critter.parts.json').then((r) => r.json() as Promise<Record<string, PartSpec>>),
+        fetch('/assets/critter.json').then((r) => r.text()),
+        fetch('/assets/critter.parts.json').then((r) => r.json() as Promise<Record<string, PartSpec>>),
       ]);
       const atlas = buildAtlas(parts);
       const data = rt.loadSpine(json, atlas.text);

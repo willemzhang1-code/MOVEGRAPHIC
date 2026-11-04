@@ -6,7 +6,7 @@ use sinew_core::import::load_spine_json;
 use sinew_core::{AnimationState, Atlas, RenderBuffers, Skeleton, SkeletonData, StateEventKind, Vec2};
 
 fn load() -> SkeletonData {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/demo/public/assets/critter.json");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/public/assets/critter.json");
     let text = std::fs::read_to_string(path).expect("run `node tools/gen-demo.mjs` first");
     let mut data = load_spine_json(&text).expect("load");
     // Synthetic atlas: one page, every part in its own cell.

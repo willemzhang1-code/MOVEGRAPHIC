@@ -299,6 +299,18 @@ pub unsafe extern "C" fn sinew_instance_set_track_additive(i: *mut SinewInstance
     }
 }
 
+/// Jumps a track to a time in seconds (editor scrubbing).
+#[no_mangle]
+pub unsafe extern "C" fn sinew_instance_seek(i: *mut SinewInstance, track: u32, time: f32) {
+    (&mut *i).state.seek(track as usize, time);
+}
+
+/// Current track time, or -1 if the track is empty.
+#[no_mangle]
+pub unsafe extern "C" fn sinew_instance_track_time(i: *const SinewInstance, track: u32) -> f32 {
+    (&*i).state.current(track as usize).map_or(-1.0, |e| e.track_time)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn sinew_instance_set_time_scale(i: *mut SinewInstance, time_scale: f32) {
     (&mut *i).state.time_scale = time_scale;

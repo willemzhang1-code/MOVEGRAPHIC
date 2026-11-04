@@ -421,6 +421,20 @@ impl AnimationState {
         e.last_anim_time = Some(time);
     }
 
+    /// Jumps a track to `track_time` (editor scrubbing): ends any crossfade
+    /// and suppresses events between the old and new time.
+    pub fn seek(&mut self, track: usize, track_time: f32) {
+        let Some(mut e) = self.tracks.get_mut(track).and_then(|t| t.take()) else { return };
+        if let Some(from) = e.mixing_from.take() {
+            self.end_chain(track, &from);
+        }
+        e.track_time = track_time.max(0.0);
+        e.mix_time = e.mix_duration;
+        e.last_anim_time = Some(e.animation_time());
+        e.interrupted_at = None;
+        self.tracks[track] = Some(e);
+    }
+
     /// Takes all events produced since the last call.
     pub fn drain_events(&mut self) -> Vec<StateEvent> {
         std::mem::take(&mut self.events)
