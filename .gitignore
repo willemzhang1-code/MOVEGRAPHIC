@@ -4,3 +4,4 @@ dist/
 web/public/sinew.wasm
 *.log
 web/public/examples/
+.deploy/
