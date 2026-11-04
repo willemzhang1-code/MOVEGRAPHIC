@@ -1,9 +1,9 @@
 // Cloudflare Worker serving the built web app from the `deploy` branch of the
-// public GitHub repo, pinned to a commit and cached at the edge.
-// REF is replaced with the deploy commit when the worker is uploaded.
+// public GitHub repo, cached at the edge. Deploying = pushing that branch
+// (tools/build-deploy.sh); hashed assets are kept across deploys.
 
 const REPO = 'willemzhang1-code/MOVEGRAPHIC';
-const REF = '__REF__';
+const REF = 'deploy';
 const TYPES = {
   html: 'text/html; charset=utf-8',
   js: 'text/javascript; charset=utf-8',
@@ -27,10 +27,10 @@ export default {
     if (path.endsWith('/')) path += 'index.html';
     const ext = path.split('.').pop().toLowerCase();
     const cache = caches.default;
-    const key = new Request(`https://rabbit-cache.invalid/${REF}${path}`);
+    const key = new Request(`https://rabbit-cache.invalid${path}`);
     let res = await cache.match(key);
     if (!res) {
-      const origin = await fetch(`https://raw.githubusercontent.com/${REPO}/${REF}${path}`, { cf: { cacheTtl: 86400, cacheEverything: true } });
+      const origin = await fetch(`https://raw.githubusercontent.com/${REPO}/${REF}${path}`, { cf: { cacheTtl: 60, cacheEverything: true } });
       if (!origin.ok) return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
       const immutable = /^\/assets\/.+-[A-Za-z0-9_-]{8}\.(js|css)$/.test(path);
       res = new Response(origin.body, {

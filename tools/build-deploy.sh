@@ -11,14 +11,15 @@ cp -r dist/. "$tmp/"
 cd "$root"
 git worktree remove --force .deploy 2>/dev/null || true
 if git ls-remote --exit-code origin deploy >/dev/null 2>&1; then
-  git fetch -q origin deploy
+  git fetch -q origin +deploy:refs/remotes/origin/deploy
   git worktree add -q -B deploy .deploy origin/deploy
 else
   git worktree add -q --detach .deploy
   (cd .deploy && git checkout -q --orphan deploy && git rm -rqf . >/dev/null 2>&1 || true)
 fi
 cd .deploy
-find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+# Keep old hashed assets so cached pages keep working during a rollout.
+find . -mindepth 1 -maxdepth 1 ! -name .git ! -name assets -exec rm -rf {} +
 cp -r "$tmp/." .
 git add -A
 git commit -q -m "deploy: $(git -C "$root" rev-parse --short HEAD)" || true

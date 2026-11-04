@@ -33,4 +33,4 @@ cd web && npm install && npm run dev   # http://127.0.0.1:5173
 ./tools/build-deploy.sh            # 构建并把 dist 推到 deploy 分支，输出 commit
 ```
 
-`tools/worker.js`（把 `__REF__` 换成上面的 commit）上传为 Cloudflare Worker `rabbit-studio`，按 commit 从公开仓库拉取文件并在边缘缓存。
+`tools/worker.js` 已部署为 Cloudflare Worker `rabbit-studio`，从公开仓库的 `deploy` 分支取文件并在边缘缓存（约 5 分钟生效），推送 deploy 分支即完成发布。
