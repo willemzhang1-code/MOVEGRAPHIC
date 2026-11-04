@@ -18,13 +18,14 @@
 - `AnimationState.apply` 每帧从 setup pose 开始：未被任何动画 key 的属性回到 setup（Spine 会保留上一帧值）。宿主手动覆盖应放在 apply 之后。
 - 未实现：Path / Physics 约束、Clipping、Sequence、`.skel` 二进制、Spine 3.x；Spine 4.3 格式变化未验证。
 
-## 官方示例兼容性（Spine 4.2，20 个）
+## 官方示例对照（Spine 4.2，20 个，官方 runtime 渲染为基准）
 
-`node tools/fetch-spine-examples.mjs` 下载到本地（不入库），`cargo run --release -p sinew-core --example compat` 扫描。
+本地：`node tools/fetch-spine-examples.mjs` → `cargo run --release -p sinew-core --example compat`（导入/NaN 扫描）→ 开发服务器打开 `/parity/`（与官方 spine-webgl 逐帧对比轮廓 IoU）。
 
-| 状态 | 示例 |
+| IoU（越接近 1 越一致） | 示例 |
 |---|---|
-| 导入 + 全部动画无错误，静态/动态画面目测正确 | spineboy, raptor, goblins, stretchyman, owl, hero, powerup, speedy, windmill, alien, chibi-stickers, snowglobe（静态）, celestial-circus（静态） |
-| 依赖未实现功能，画面有缺失或变形 | tank / vine / hero / stretchyman / mix-and-match（Path 约束）, coin / tank（Clipping）, celestial-circus / cloud-pot / sack / snowglobe（Physics）, dragon（Sequence） |
+| ≥ 0.98 | alien 0.999 · chibi-stickers 0.994 · mix-and-match 0.992 · speedy 0.991 · windmill 0.990 · hero 0.988 · spineboy 0.986 |
+| 0.95 – 0.98 | goblins 0.980 · raptor 0.974 · coin 0.974 · celestial-circus 0.972 · tank 0.970 · owl 0.968 · dragon 0.967 · cloud-pot 0.965 · powerup 0.963 · stretchyman 0.952 |
+| < 0.95 | sack 0.954（最差帧 0.85）· snowglobe 0.946（最差帧 0.84）：物理模型为独立实现，需按黑盒响应拟合；vine 第 0 帧缩放为 0（可忽略，t>0 为 0.95） |
 
-M1 实现顺序按影响面：Path → Clipping → Physics → Sequence。
+全部 20 个示例导入零警告：Path / Clipping / Sequence / Physics 已实现。

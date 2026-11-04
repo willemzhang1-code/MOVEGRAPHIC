@@ -80,6 +80,7 @@ pub mod prop_kind {
     pub const PATH_POSITION: u64 = 18;
     pub const PATH_SPACING: u64 = 19;
     pub const PATH_MIX: u64 = 20;
+    pub const SEQUENCE: u64 = 21;
 }
 
 /// Identifies one scalar-ish animatable property, used to decide which
@@ -244,6 +245,8 @@ pub enum DiscreteChannel {
     /// `None` restores setup order.
     DrawOrder { times: Vec<f32>, orders: Vec<Option<Vec<usize>>> },
     Inherit { bone: usize, times: Vec<f32>, values: Vec<Inherit> },
+    /// Sequence playback keys for the attachment with `attachment` deform id.
+    Sequence { slot: usize, attachment: u32, times: Vec<f32>, modes: Vec<u8>, indices: Vec<i32>, delays: Vec<f32> },
 }
 
 impl DiscreteChannel {
@@ -251,7 +254,8 @@ impl DiscreteChannel {
         match self {
             DiscreteChannel::Attachment { times, .. }
             | DiscreteChannel::DrawOrder { times, .. }
-            | DiscreteChannel::Inherit { times, .. } => times,
+            | DiscreteChannel::Inherit { times, .. }
+            | DiscreteChannel::Sequence { times, .. } => times,
         }
     }
 
@@ -261,6 +265,7 @@ impl DiscreteChannel {
             DiscreteChannel::Attachment { slot, .. } => vec![prop_id(ATTACHMENT, *slot, 0)],
             DiscreteChannel::DrawOrder { .. } => vec![prop_id(DRAW_ORDER, 0, 0)],
             DiscreteChannel::Inherit { bone, .. } => vec![prop_id(INHERIT, *bone, 0)],
+            DiscreteChannel::Sequence { slot, attachment, .. } => vec![prop_id(SEQUENCE, *slot, *attachment)],
         }
     }
 
@@ -364,6 +369,44 @@ impl Animation {
                     None if blend == MixBlend::Setup => sk.bones[*bone].inherit = sk.data.bones[*bone].inherit,
                     None => {}
                 },
+                DiscreteChannel::Sequence { slot, attachment, times, modes, indices, delays } => {
+                    let Some(k) = k else {
+                        if blend == MixBlend::Setup {
+                            sk.slots[*slot].sequence_index = -1;
+                        }
+                        continue;
+                    };
+                    let Some(r) = sk.slots[*slot].attachment else { continue };
+                    let data = sk.data.clone();
+                    let att = data.attachment(r);
+                    if att.deform_id != *attachment {
+                        continue;
+                    }
+                    let count = match &att.kind {
+                        crate::model::AttachmentKind::Region(a) => a.sequence.as_ref().map_or(1, |q| q.count),
+                        crate::model::AttachmentKind::Mesh(m) => m.sequence.as_ref().map_or(1, |q| q.count),
+                        _ => 1,
+                    } as i32;
+                    let mut index = indices[k];
+                    let mode = modes[k];
+                    if mode != 0 && delays[k] > 0.0 {
+                        let elapsed = ((time - times[k]) / delays[k] + 1e-4).floor() as i32;
+                        index = match mode {
+                            1 => (index + elapsed).min(count - 1),
+                            2 => (index + elapsed).rem_euclid(count),
+                            3 | 6 => {
+                                let period = (count * 2 - 2).max(1);
+                                let i = (index + elapsed).rem_euclid(period);
+                                let i = if i >= count { period - i } else { i };
+                                if mode == 6 { count - 1 - i } else { i }
+                            }
+                            4 => (count - 1 - (index + elapsed)).max(0),
+                            5 => count - 1 - (index + elapsed).rem_euclid(count),
+                            _ => index,
+                        };
+                    }
+                    sk.slots[*slot].sequence_index = index;
+                }
             }
         }
     }

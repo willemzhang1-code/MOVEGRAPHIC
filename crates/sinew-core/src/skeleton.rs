@@ -24,6 +24,8 @@ pub struct Slot {
     pub attachment: Option<AttachmentRef>,
     /// Deform values for the current attachment; empty means setup vertices.
     pub deform: Vec<f32>,
+    /// Current frame of a sequence attachment (-1 = setup frame).
+    pub sequence_index: i32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -135,7 +137,7 @@ impl Skeleton {
         let slots = data
             .slots
             .iter()
-            .map(|s| Slot { color: s.color, dark: s.dark, attachment: None, deform: Vec::new() })
+            .map(|s| Slot { color: s.color, dark: s.dark, attachment: None, deform: Vec::new(), sequence_index: -1 })
             .collect();
         let ik = data
             .ik
@@ -228,6 +230,7 @@ impl Skeleton {
             let s = &mut self.slots[i];
             s.color = d.color;
             s.dark = d.dark;
+            s.sequence_index = -1;
             self.set_attachment(i, d.attachment.as_deref());
         }
     }
@@ -259,6 +262,7 @@ impl Skeleton {
                 s.deform.clear();
             }
             s.attachment = r;
+            s.sequence_index = -1;
         }
     }
 

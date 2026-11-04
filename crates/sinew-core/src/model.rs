@@ -154,6 +154,29 @@ impl Vertices {
     }
 }
 
+/// Frame-by-frame images for a region or mesh attachment.
+#[derive(Clone, Debug)]
+pub struct Sequence {
+    pub count: usize,
+    pub start: usize,
+    pub digits: usize,
+    pub setup_index: i32,
+    /// Resolved per frame by `bind_atlas`.
+    pub regions: Vec<Option<TextureRegion>>,
+}
+
+impl Sequence {
+    pub fn frame_path(&self, base: &str, i: usize) -> String {
+        format!("{base}{:0width$}", self.start + i, width = self.digits)
+    }
+
+    /// Frame for a slot's sequence index (-1 = setup frame).
+    pub fn frame(&self, slot_index: i32) -> usize {
+        let i = if slot_index < 0 { self.setup_index } else { slot_index };
+        (i.max(0) as usize).min(self.count.saturating_sub(1))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RegionAttachment {
     pub path: String,
@@ -162,13 +185,26 @@ pub struct RegionAttachment {
     pub height: f32,
     pub color: Color,
     pub region: Option<TextureRegion>,
+    pub sequence: Option<Sequence>,
 }
 
 impl RegionAttachment {
+    /// Region shown for a slot's sequence index.
+    pub fn region_for(&self, slot_index: i32) -> Option<&TextureRegion> {
+        match &self.sequence {
+            Some(seq) => seq.regions.get(seq.frame(slot_index)).and_then(|r| r.as_ref()),
+            None => self.region.as_ref(),
+        }
+    }
+
     /// Corners (BL, TL, TR, BR) in bone space and their page UVs.
     pub fn quad(&self) -> ([Vec2; 4], [(f32, f32); 4]) {
+        self.quad_with(self.region.as_ref())
+    }
+
+    pub fn quad_with(&self, region: Option<&TextureRegion>) -> ([Vec2; 4], [(f32, f32); 4]) {
         let fallback;
-        let r = match &self.region {
+        let r = match region {
             Some(r) => r,
             None => {
                 fallback = TextureRegion::whole(0, self.width.max(1.0), self.height.max(1.0));
@@ -215,21 +251,38 @@ pub struct MeshAttachment {
     pub region: Option<TextureRegion>,
     /// Page UVs, computed by `bind_region`.
     pub uvs: Vec<f32>,
+    pub sequence: Option<Sequence>,
+    /// Page UVs per sequence frame.
+    pub sequence_uvs: Vec<Vec<f32>>,
 }
 
 impl MeshAttachment {
     pub fn bind_region(&mut self, region: Option<TextureRegion>) {
+        self.uvs = Self::map_uvs(&self.region_uvs, region.as_ref());
         self.region = region;
-        self.uvs.clear();
-        match &self.region {
-            Some(r) => {
-                for p in self.region_uvs.chunks_exact(2) {
+    }
+
+    fn map_uvs(region_uvs: &[f32], region: Option<&TextureRegion>) -> Vec<f32> {
+        match region {
+            Some(r) => region_uvs
+                .chunks_exact(2)
+                .flat_map(|p| {
                     let (u, v) = r.map_uv(p[0], p[1]);
-                    self.uvs.push(u);
-                    self.uvs.push(v);
-                }
+                    [u, v]
+                })
+                .collect(),
+            None => region_uvs.to_vec(),
+        }
+    }
+
+    /// Region and page UVs shown for a slot's sequence index.
+    pub fn frame(&self, slot_index: i32) -> (Option<&TextureRegion>, &[f32]) {
+        match &self.sequence {
+            Some(seq) if !self.sequence_uvs.is_empty() => {
+                let f = seq.frame(slot_index);
+                (seq.regions.get(f).and_then(|r| r.as_ref()), &self.sequence_uvs[f])
             }
-            None => self.uvs.extend_from_slice(&self.region_uvs),
+            _ => (self.region.as_ref(), &self.uvs),
         }
     }
 }
@@ -556,17 +609,39 @@ impl SkeletonData {
             for (_, att) in &mut skin.attachments {
                 match &mut att.kind {
                     AttachmentKind::Region(r) => {
-                        r.region = atlas.find(&r.path).cloned();
-                        if r.region.is_none() {
-                            missing.push(r.path.clone());
+                        if let Some(seq) = &mut r.sequence {
+                            seq.regions = (0..seq.count).map(|i| atlas.find(&seq.frame_path(&r.path, i)).cloned()).collect();
+                            for (i, reg) in seq.regions.iter().enumerate() {
+                                if reg.is_none() {
+                                    missing.push(seq.frame_path(&r.path, i));
+                                }
+                            }
+                            r.region = seq.regions.get(seq.frame(-1)).cloned().flatten();
+                        } else {
+                            r.region = atlas.find(&r.path).cloned();
+                            if r.region.is_none() {
+                                missing.push(r.path.clone());
+                            }
                         }
                     }
                     AttachmentKind::Mesh(m) => {
-                        let region = atlas.find(&m.path).cloned();
-                        if region.is_none() {
-                            missing.push(m.path.clone());
+                        if let Some(seq) = &mut m.sequence {
+                            seq.regions = (0..seq.count).map(|i| atlas.find(&seq.frame_path(&m.path, i)).cloned()).collect();
+                            for (i, reg) in seq.regions.iter().enumerate() {
+                                if reg.is_none() {
+                                    missing.push(seq.frame_path(&m.path, i));
+                                }
+                            }
+                            m.sequence_uvs = seq.regions.iter().map(|r| MeshAttachment::map_uvs(&m.region_uvs, r.as_ref())).collect();
+                            let first = seq.regions.get(seq.frame(-1)).cloned().flatten();
+                            m.bind_region(first);
+                        } else {
+                            let region = atlas.find(&m.path).cloned();
+                            if region.is_none() {
+                                missing.push(m.path.clone());
+                            }
+                            m.bind_region(region);
                         }
-                        m.bind_region(region);
                     }
                     _ => {}
                 }

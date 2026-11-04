@@ -426,9 +426,13 @@ fn read_attachment(
     let name = string(a, "name").unwrap_or(key).to_string();
     let path = string(a, "path").unwrap_or(&name).to_string();
     let kind_name = string(a, "type").unwrap_or("region");
-    if a.get("sequence").is_some() {
-        cx.warn(format!("attachment '{name}': sequences are not supported yet (M1)"));
-    }
+    let sequence = a.get("sequence").map(|q| Sequence {
+        count: int(q, "count", 1).max(1) as usize,
+        start: int(q, "start", 1).max(0) as usize,
+        digits: int(q, "digits", 0).max(0) as usize,
+        setup_index: int(q, "setup", int(q, "setupIndex", 0)) as i32,
+        regions: Vec::new(),
+    });
     let col = color(a, "color").unwrap_or(Color::WHITE);
     let kind = match kind_name {
         "region" => AttachmentKind::Region(RegionAttachment {
@@ -445,6 +449,7 @@ fn read_attachment(
             height: num(a, "height", 32.0),
             color: col,
             region: None,
+            sequence: sequence.clone(),
         }),
         "mesh" | "linkedmesh" => {
             let mut m = MeshAttachment {
@@ -460,6 +465,8 @@ fn read_attachment(
                 height: num(a, "height", 0.0),
                 region: None,
                 uvs: Vec::new(),
+                sequence: sequence.clone(),
+                sequence_uvs: Vec::new(),
             };
             if kind_name == "linkedmesh" {
                 links.push(PendingLink {
@@ -487,7 +494,6 @@ fn read_attachment(
             match kind_name {
                 "boundingbox" => AttachmentKind::BoundingBox(shape),
                 "clipping" => {
-                    cx.warn("clipping attachments are not rendered yet (M1)");
                     let end_slot = string(a, "end").and_then(|s| cx.data.find_slot(s));
                     AttachmentKind::Clipping(ClippingAttachment { shape, end_slot })
                 }
@@ -737,6 +743,7 @@ fn read_animation(cx: &mut Ctx, name: &str, a: &Value) -> Result<Animation, Stri
 
     // 4.1+: attachments/<skin>/<slot>/<attachment>/{deform, sequence}; 4.0: deform/<skin>/<slot>/<attachment>
     let mut deforms: Vec<(String, String, String, Vec<Value>)> = Vec::new();
+    let mut sequences: Vec<(String, String, String, Vec<Value>)> = Vec::new();
     if let Some(skins) = obj(a, "attachments") {
         for (skin, slots) in skins {
             for (slot, atts) in slots.as_object().into_iter().flatten() {
@@ -744,8 +751,8 @@ fn read_animation(cx: &mut Ctx, name: &str, a: &Value) -> Result<Animation, Stri
                     if let Some(f) = tls.get("deform").and_then(Value::as_array) {
                         deforms.push((skin.clone(), slot.clone(), att.clone(), f.clone()));
                     }
-                    if tls.get("sequence").is_some() {
-                        cx.warn("sequence timelines are not supported yet (M1)");
+                    if let Some(f) = tls.get("sequence").and_then(Value::as_array) {
+                        sequences.push((skin.clone(), slot.clone(), att.clone(), f.clone()));
                     }
                 }
             }
@@ -788,6 +795,33 @@ fn read_animation(cx: &mut Ctx, name: &str, a: &Value) -> Result<Animation, Stri
             ch.push(num(f, "time", 0.0), &values, &read_curves(f, 1), 0);
         }
         anim.curves.push(ch);
+    }
+
+    for (skin_name, slot_name, att_name, frames) in sequences {
+        let slot = cx.slot(&slot_name, &ctx)?;
+        let Some(skin) = cx.data.find_skin(&skin_name) else { continue };
+        let Some(att) = cx.data.skins[skin].get(slot, &att_name) else {
+            cx.warn(format!("{ctx}: sequence for unknown attachment '{att_name}'"));
+            continue;
+        };
+        let attachment = att.deform_id;
+        let mode = |s: &str| match s {
+            "once" => 1,
+            "loop" => 2,
+            "pingpong" => 3,
+            "onceReverse" => 4,
+            "loopReverse" => 5,
+            "pingpongReverse" => 6,
+            _ => 0,
+        };
+        anim.discrete.push(DiscreteChannel::Sequence {
+            slot,
+            attachment,
+            times: frames.iter().map(|f| num(f, "time", 0.0)).collect(),
+            modes: frames.iter().map(|f| mode(string(f, "mode").unwrap_or("hold"))).collect(),
+            indices: frames.iter().map(|f| int(f, "index", 0) as i32).collect(),
+            delays: frames.iter().map(|f| num(f, "delay", 0.0)).collect(),
+        });
     }
 
     let draw_order = a.get("drawOrder").or_else(|| a.get("draworder"));
