@@ -292,7 +292,7 @@ fn read_skins(cx: &mut Ctx, root: &Value) -> Result<(), String> {
                 let Some(atts) = atts.as_object() else { continue };
                 for (att_name, a) in atts {
                     if let Some(att) = read_attachment(cx, skin_index, slot, att_name, a, &mut links)? {
-                        skin.insert(slot, att);
+                        skin.insert(slot, att_name, att);
                     }
                 }
             }
@@ -382,7 +382,7 @@ fn read_attachment(
                 links.push(PendingLink {
                     skin,
                     slot,
-                    name: name.clone(),
+                    name: key.to_string(),
                     parent: string(a, "parent").unwrap_or_default().to_string(),
                     parent_skin: string(a, "skin").map(str::to_string),
                     inherit_timelines: boolean(a, "timelines", true),
@@ -716,4 +716,33 @@ fn read_animation(cx: &mut Ctx, name: &str, a: &Value) -> Result<Animation, Stri
 
     anim.finalize();
     Ok(anim)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skin_entries_keyed_by_placeholder() {
+        let json = r#"{
+          "skeleton": {"spine": "4.2.0"},
+          "bones": [{"name": "root"}],
+          "slots": [{"name": "s", "bone": "root", "attachment": "body"}],
+          "skins": [
+            {"name": "default", "attachments": {"s": {"body": {"type": "mesh", "name": "base/body", "uvs": [0,0,1,0,1,1], "triangles": [0,1,2], "vertices": [0,0,10,0,10,10], "hull": 3}}}},
+            {"name": "girl", "attachments": {"s": {"body": {"type": "linkedmesh", "name": "girl/body", "parent": "body"}}}}
+          ],
+          "animations": {"a": {"attachments": {"default": {"s": {"body": {"deform": [{"time": 0}, {"time": 1, "vertices": [1, 1]}]}}}}}}
+        }"#;
+        let d = load_spine_json(json).unwrap();
+        assert!(d.warnings.is_empty(), "{:?}", d.warnings);
+        let girl = &d.skins[d.find_skin("girl").unwrap()];
+        let linked = girl.get(0, "body").expect("linked mesh found by key");
+        assert_eq!(linked.name, "girl/body");
+        let parent = d.skins[0].get(0, "body").unwrap();
+        assert_eq!(linked.deform_id, parent.deform_id);
+        let AttachmentKind::Mesh(m) = &linked.kind else { panic!() };
+        assert_eq!(m.vertex_count, 3);
+        assert_eq!(d.animations[0].curves.len(), 1);
+    }
 }

@@ -300,6 +300,8 @@ impl Attachment {
 pub struct Skin {
     pub name: String,
     pub attachments: Vec<(usize, Attachment)>,
+    /// Placeholder key per attachment (what slots, timelines and skins refer to).
+    pub keys: Vec<String>,
     index: HashMap<(usize, String), usize>,
     pub bones: Vec<usize>,
     pub ik: Vec<usize>,
@@ -311,13 +313,15 @@ impl Skin {
         Skin { name: name.into(), ..Default::default() }
     }
 
-    pub fn insert(&mut self, slot: usize, attachment: Attachment) {
-        let key = (slot, attachment.name.clone());
-        if let Some(&i) = self.index.get(&key) {
+    /// Adds an attachment under its placeholder `key` (may differ from `attachment.name`).
+    pub fn insert(&mut self, slot: usize, key: &str, attachment: Attachment) {
+        let k = (slot, key.to_string());
+        if let Some(&i) = self.index.get(&k) {
             self.attachments[i] = (slot, attachment);
         } else {
-            self.index.insert(key, self.attachments.len());
+            self.index.insert(k, self.attachments.len());
             self.attachments.push((slot, attachment));
+            self.keys.push(key.to_string());
         }
     }
 

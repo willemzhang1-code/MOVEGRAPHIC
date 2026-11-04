@@ -1,100 +1,227 @@
-import { EventKind, SinewRenderer, SinewRuntime, ortho, type SinewTexture, type SkeletonInstance } from '@sinew/runtime';
+import {
+  EventKind,
+  SinewRenderer,
+  SinewRuntime,
+  ortho,
+  type SinewTexture,
+  type SkeletonData,
+  type SkeletonInstance,
+} from '@sinew/runtime';
 import { buildAtlas, type PartSpec } from './textures';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
-const SPACING_X = 230;
-const SPACING_Y = 360;
-const CHAR_BOUNDS = { minX: -175, maxX: 95, minY: -10, maxY: 325 };
+interface ExampleEntry {
+  name: string;
+  skeleton: string;
+  atlas: string;
+  pages: string[];
+}
+
+interface Loaded {
+  id: string;
+  data: SkeletonData;
+  pages: SinewTexture[];
+  /** Setup-pose bounds: minX, minY, maxX, maxY. */
+  bounds: [number, number, number, number];
+  isDemo: boolean;
+}
+
+const EXAMPLES_DIR = 'examples/4.2';
+const DEMO_ID = 'critter (demo)';
+
+async function loadImage(url: string): Promise<HTMLImageElement> {
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  return img;
+}
+
+/** Prefers complete skins (e.g. "full-skins/girl") over partial ones. */
+function pickSkin(d: SkeletonData): string {
+  const named = d.skins.filter((s) => s !== 'default');
+  return named.find((s) => /full/i.test(s)) ?? named[0] ?? '';
+}
 
 async function main() {
-  const [rt, json, parts] = await Promise.all([
-    SinewRuntime.load(new URL('sinew.wasm', document.baseURI)),
-    fetch('assets/critter.json').then((r) => r.text()),
-    fetch('assets/critter.parts.json').then((r) => r.json() as Promise<Record<string, PartSpec>>),
-  ]);
-  const atlas = buildAtlas(parts);
-  const data = rt.loadSpine(json, atlas.text);
-
+  const rt = await SinewRuntime.load(new URL('sinew.wasm', document.baseURI));
   const canvas = $<HTMLCanvasElement>('#view');
   const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: true });
   if (!gl) throw new Error('WebGL2 is not available');
   const renderer = new SinewRenderer(gl);
-  const pages: SinewTexture[] = data.pages.map((p) => renderer.createTexture(atlas.canvas, p.pma));
 
-  const opts = { base: 'idle', waving: false, skin: 'green', mix: 0.25, speed: 1, showBones: false, flip: false };
+  const examples: ExampleEntry[] = await fetch(`${EXAMPLES_DIR}/index.json`)
+    .then((r) => (r.ok ? r.json() : []))
+    .catch(() => []);
+  const assetSel = $<HTMLSelectElement>('#asset');
+  assetSel.add(new Option(DEMO_ID, DEMO_ID));
+  for (const e of examples) assetSel.add(new Option(`${e.name} (Spine 4.2 example)`, e.name));
+
+  const opts = { base: '', waving: false, skin: '', mix: 0.25, speed: 1, crowd: 1, showBones: false, flip: false };
   const instances: SkeletonInstance[] = [];
-  let camera = { x: 0, y: 160, zoom: 1 };
+  let asset: Loaded | null = null;
+  let camera = { x: 0, y: 0, zoom: 1 };
 
-  $('#info').textContent = `core ${rt.version} · ${data.bones.length} bones · ${data.slots.length} slots · ${data.animations.length} animations`;
-  const warnings = $('#warnings');
-  warnings.textContent = data.warnings.length ? data.warnings.join('\n') : 'none';
+  function measure(data: SkeletonData, skin: string | null): [number, number, number, number] {
+    const inst = data.createInstance();
+    if (skin) inst.setSkin(skin);
+    inst.update(0);
+    const v = inst.render().vertices;
+    const b: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < v.length; i += 6) {
+      b[0] = Math.min(b[0], v[i]);
+      b[1] = Math.min(b[1], v[i + 1]);
+      b[2] = Math.max(b[2], v[i]);
+      b[3] = Math.max(b[3], v[i + 1]);
+    }
+    inst.dispose();
+    return Number.isFinite(b[0]) ? b : [-100, 0, 100, 200];
+  }
+
+  async function load(id: string): Promise<Loaded> {
+    if (id === DEMO_ID) {
+      const [json, parts] = await Promise.all([
+        fetch('assets/critter.json').then((r) => r.text()),
+        fetch('assets/critter.parts.json').then((r) => r.json() as Promise<Record<string, PartSpec>>),
+      ]);
+      const atlas = buildAtlas(parts);
+      const data = rt.loadSpine(json, atlas.text);
+      const pages = data.pages.map((p) => renderer.createTexture(atlas.canvas, p.pma));
+      return { id, data, pages, bounds: measure(data, 'green'), isDemo: true };
+    }
+    const e = examples.find((x) => x.name === id)!;
+    const base = `${EXAMPLES_DIR}/${e.name}`;
+    const [json, atlasText, images] = await Promise.all([
+      fetch(`${base}/${e.skeleton}`).then((r) => r.text()),
+      fetch(`${base}/${e.atlas}`).then((r) => r.text()),
+      Promise.all(e.pages.map((p) => loadImage(`${base}/${p}`))),
+    ]);
+    const data = rt.loadSpine(json, atlasText);
+    const pages = data.pages.map((p, i) => renderer.createTexture(images[i], p.pma));
+    return { id, data, pages, bounds: measure(data, pickSkin(data) || null), isDemo: false };
+  }
+
+  function skinFor(i: number): string | null {
+    if (!asset) return null;
+    if (asset.isDemo) return i % 3 === 2 ? (opts.skin === 'green' ? 'purple' : 'green') : opts.skin;
+    return opts.skin || null;
+  }
+
+  function makeInstance(i: number): SkeletonInstance {
+    const inst = asset!.data.createInstance();
+    inst.setSkin(skinFor(i));
+    inst.setDefaultMix(opts.mix);
+    inst.setTimeScale(opts.speed);
+    if (opts.base) inst.setAnimation(0, opts.base, true);
+    if (opts.waving) startWave(inst);
+    inst.update(i === 0 ? 0 : Math.random() * 2);
+    return inst;
+  }
 
   function startWave(inst: SkeletonInstance) {
     inst.setEmptyAnimation(1, 0);
     inst.addAnimation(1, 'wave', true, 0);
   }
 
-  function makeInstance(i: number): SkeletonInstance {
-    const inst = data.createInstance();
-    inst.setSkin(i % 3 === 2 ? (opts.skin === 'green' ? 'purple' : 'green') : opts.skin);
-    inst.setDefaultMix(opts.mix);
-    inst.setTimeScale(opts.speed);
-    inst.setAnimation(0, opts.base, true);
-    if (opts.waving) startWave(inst);
-    inst.update(i === 0 ? 0 : Math.random() * 2);
-    return inst;
-  }
-
   function layout() {
+    if (!asset) return;
+    const [x0, y0, x1, y1] = asset.bounds;
+    const bw = x1 - x0;
+    const bh = y1 - y0;
+    const sx = bw * 1.1;
+    const sy = bh * 1.1;
     const n = instances.length;
-    const cols = Math.ceil(Math.sqrt(n * 1.8));
+    const cols = Math.ceil(Math.sqrt(n * (sy / sx) * 1.6));
     const rows = Math.ceil(n / cols);
+    const flip = opts.flip ? -1 : 1;
     instances.forEach((inst, i) => {
       const c = i % cols;
       const r = Math.floor(i / cols);
-      const x = (c - (cols - 1) / 2) * SPACING_X;
-      const y = ((rows - 1) / 2 - r) * SPACING_Y;
-      inst.setTransform(x, y, opts.flip ? -1 : 1, 1);
+      inst.setTransform((c - (cols - 1) / 2) * sx, ((rows - 1) / 2 - r) * sy, flip, 1);
     });
-    const w = (cols - 1) * SPACING_X + (CHAR_BOUNDS.maxX - CHAR_BOUNDS.minX);
-    const h = (rows - 1) * SPACING_Y + (CHAR_BOUNDS.maxY - CHAR_BOUNDS.minY);
-    camera = {
-      x: (opts.flip ? 1 : -1) * ((CHAR_BOUNDS.maxX + CHAR_BOUNDS.minX) / -2) * (n === 1 ? 1 : 0),
-      y: (CHAR_BOUNDS.maxY + CHAR_BOUNDS.minY) / 2,
-      zoom: 0,
-    };
-    if (n === 1) camera.x = opts.flip ? -(CHAR_BOUNDS.maxX + CHAR_BOUNDS.minX) / 2 : (CHAR_BOUNDS.maxX + CHAR_BOUNDS.minX) / 2;
     const rect = canvas.getBoundingClientRect();
-    camera.zoom = Math.min(rect.width / (w * 1.15), rect.height / (h * 1.15));
-    $('#ground').style.display = n === 1 ? '' : 'none';
+    const w = (cols - 1) * sx + bw;
+    const h = (rows - 1) * sy + bh;
+    const cx = n === 1 ? (flip * (x0 + x1)) / 2 : 0;
+    const cy = n === 1 ? (y0 + y1) / 2 : 0;
+    camera = { x: cx, y: cy, zoom: Math.min(rect.width / (w * 1.15), rect.height / (h * 1.15)) };
+    $('#ground').style.display = n === 1 && asset.isDemo ? '' : 'none';
   }
 
-  function setCrowd(n: number) {
-    while (instances.length < n) instances.push(makeInstance(instances.length));
-    while (instances.length > n) instances.pop()!.dispose();
+  function rebuild() {
+    while (instances.length) instances.pop()!.dispose();
+    for (let i = 0; i < opts.crowd; i++) instances.push(makeInstance(i));
     layout();
   }
 
   const forAll = (fn: (i: SkeletonInstance) => void) => instances.forEach(fn);
 
-  // ---------------------------------------------------------------- controls
-  const setBase = (name: string) => {
+  function setBase(name: string) {
     opts.base = name;
-    document.querySelectorAll<HTMLButtonElement>('[data-base]').forEach((b) => b.classList.toggle('on', b.dataset.base === name));
+    document.querySelectorAll<HTMLButtonElement>('#anims button').forEach((b) => b.classList.toggle('on', b.dataset.anim === name));
     forAll((i) => i.setAnimation(0, name, true));
-  };
+  }
+
+  async function selectAsset(id: string) {
+    while (instances.length) instances.pop()!.dispose();
+    if (asset) {
+      asset.pages.forEach((p) => renderer.deleteTexture(p));
+      asset.data.dispose();
+    }
+    asset = await load(id);
+    const d = asset.data;
+    opts.waving = false;
+    opts.skin = asset.isDemo ? 'green' : pickSkin(d);
+    const preferred = ['idle', 'walk', 'run', 'animation'];
+    opts.base = preferred.find((p) => d.animations.some((a) => a.name === p)) ?? d.animations[0]?.name ?? '';
+
+    const anims = $('#anims');
+    anims.replaceChildren();
+    const playable = asset.isDemo ? d.animations.filter((a) => ['idle', 'walk'].includes(a.name)) : d.animations;
+    playable.forEach((a, i) => {
+      const b = document.createElement('button');
+      b.dataset.anim = a.name;
+      b.innerHTML = `${a.name}${asset!.isDemo ? `<kbd>${i + 1}</kbd>` : ''}`;
+      b.addEventListener('click', () => setBase(a.name));
+      anims.append(b);
+    });
+    if (asset.isDemo) {
+      const j = document.createElement('button');
+      j.innerHTML = 'jump<kbd>space</kbd>';
+      j.addEventListener('click', jump);
+      anims.append(j);
+    }
+    $('#layers').hidden = !asset.isDemo;
+    $<HTMLButtonElement>('#wave').classList.remove('on');
+
+    const skinSel = $<HTMLSelectElement>('#skin');
+    skinSel.replaceChildren();
+    for (const s of d.skins.filter((s) => s !== 'default' || d.skins.length === 1)) skinSel.add(new Option(s, s));
+    skinSel.value = opts.skin;
+    skinSel.disabled = skinSel.options.length <= 1;
+
+    $('#info').textContent = `core ${rt.version} · ${d.bones.length} bones · ${d.slots.length} slots · ${d.animations.length} animations · ${d.skins.length} skins`;
+    $('#warnings').textContent = d.warnings.length ? d.warnings.join('\n') : 'none';
+    $('#events').replaceChildren();
+    rebuild();
+    setBase(opts.base);
+    document.body.dataset.asset = id;
+  }
+
   const jump = () =>
+    asset?.isDemo &&
     forAll((i) => {
       i.setAnimation(0, 'jump', false);
       i.addAnimation(0, opts.base, true, 0);
     });
   const hit = () =>
+    asset?.isDemo &&
     forAll((i) => {
       i.setAnimation(2, 'hit', false);
       i.addEmptyAnimation(2, 0.15, 0);
     });
   const toggleWave = (on = !opts.waving) => {
+    if (!asset?.isDemo) return;
     opts.waving = on;
     $<HTMLButtonElement>('#wave').classList.toggle('on', on);
     forAll((i) => (on ? startWave(i) : i.setEmptyAnimation(1, Math.max(opts.mix, 0.2))));
@@ -104,16 +231,13 @@ async function main() {
     $<HTMLInputElement>('#bones').checked = on;
   };
 
-  document.querySelectorAll<HTMLButtonElement>('[data-base]').forEach((b) => b.addEventListener('click', () => setBase(b.dataset.base!)));
-  $('#jump').addEventListener('click', jump);
+  // ---------------------------------------------------------------- controls
+  assetSel.addEventListener('change', () => selectAsset(assetSel.value));
   $('#hit').addEventListener('click', hit);
   $('#wave').addEventListener('click', () => toggleWave());
-  const skinSel = $<HTMLSelectElement>('#skin');
-  for (const s of data.skins.filter((s) => s !== 'default')) skinSel.add(new Option(s, s));
-  skinSel.value = opts.skin;
-  skinSel.addEventListener('change', () => {
-    opts.skin = skinSel.value;
-    instances.forEach((inst, i) => inst.setSkin(i % 3 === 2 ? (opts.skin === 'green' ? 'purple' : 'green') : opts.skin));
+  $<HTMLSelectElement>('#skin').addEventListener('change', (e) => {
+    opts.skin = (e.target as HTMLSelectElement).value;
+    instances.forEach((inst, i) => inst.setSkin(skinFor(i)));
   });
   const bindRange = (id: string, fmt: (v: number) => string, fn: (v: number) => void) => {
     const el = $<HTMLInputElement>(`#${id}`);
@@ -124,7 +248,7 @@ async function main() {
       fn(v);
     };
     el.addEventListener('input', update);
-    update();
+    out.textContent = fmt(Number(el.value));
   };
   bindRange('mix', (v) => `${v.toFixed(2)}s`, (v) => {
     opts.mix = v;
@@ -134,7 +258,12 @@ async function main() {
     opts.speed = v;
     forAll((i) => i.setTimeScale(v));
   });
-  bindRange('crowd', (v) => String(v), (v) => setCrowd(v));
+  bindRange('crowd', (v) => String(v), (v) => {
+    opts.crowd = v;
+    while (instances.length < v) instances.push(makeInstance(instances.length));
+    while (instances.length > v) instances.pop()!.dispose();
+    layout();
+  });
   $<HTMLInputElement>('#bones').addEventListener('change', (e) => toggleBones((e.target as HTMLInputElement).checked));
   $<HTMLInputElement>('#flip').addEventListener('change', (e) => {
     opts.flip = (e.target as HTMLInputElement).checked;
@@ -143,8 +272,8 @@ async function main() {
   window.addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
     const k = e.key.toLowerCase();
-    if (k === '1') setBase('idle');
-    else if (k === '2') setBase('walk');
+    if (asset?.isDemo && k === '1') setBase('idle');
+    else if (asset?.isDemo && k === '2') setBase('walk');
     else if (k === ' ') {
       e.preventDefault();
       jump();
@@ -187,29 +316,28 @@ async function main() {
     gl!.clearColor(0, 0, 0, 0);
     gl!.clear(gl!.COLOR_BUFFER_BIT);
 
-    const ppu = camera.zoom * dpr;
-    renderer.begin(ortho(camera.x, camera.y, ppu, w, h));
     let vertices = 0;
-    let core = 0;
-    for (const inst of instances) {
-      const t0 = performance.now();
-      inst.update(dt);
-      const view = inst.render();
-      core += performance.now() - t0;
-      vertices += view.vertices.length / 6;
-      renderer.draw(view, pages);
-    }
-    if (opts.showBones) for (const inst of instances.slice(0, 50)) renderer.drawBones(inst.boneWorld(), data, ppu);
-    coreMs = coreMs * 0.9 + core * 0.1;
-
-    instances.forEach((inst, idx) => {
-      for (const e of inst.pollEvents()) {
-        if (idx === 0 && e.kind === EventKind.Event) logEvent(`${clock.toFixed(2)}s  ${e.name}${e.int ? ` #${e.int}` : ''}  (track ${e.track})`);
+    if (asset) {
+      const ppu = camera.zoom * dpr;
+      renderer.begin(ortho(camera.x, camera.y, ppu, w, h));
+      let core = 0;
+      for (const inst of instances) {
+        const t0 = performance.now();
+        inst.update(dt);
+        const view = inst.render();
+        core += performance.now() - t0;
+        vertices += view.vertices.length / 6;
+        renderer.draw(view, asset.pages);
       }
-    });
-
-    const ground = $('#ground');
-    ground.style.top = `${rect.height / 2 + camera.y * camera.zoom}px`;
+      if (opts.showBones) for (const inst of instances.slice(0, 50)) renderer.drawBones(inst.boneWorld(), asset.data, ppu);
+      coreMs = coreMs * 0.9 + core * 0.1;
+      instances.forEach((inst, idx) => {
+        for (const e of inst.pollEvents()) {
+          if (idx === 0 && e.kind === EventKind.Event) logEvent(`${clock.toFixed(2)}s  ${e.name}${e.int ? ` #${e.int}` : ''}  (track ${e.track})`);
+        }
+      });
+      $('#ground').style.top = `${rect.height / 2 + camera.y * camera.zoom}px`;
+    }
 
     if (now - statsAt > 250) {
       statsAt = now;
@@ -220,8 +348,11 @@ async function main() {
     }
     requestAnimationFrame(frame);
   }
-  setCrowd(1);
-  setBase('idle');
+
+  const initial = new URLSearchParams(location.search).get('asset');
+  const start = initial && examples.some((e) => e.name === initial) ? initial : DEMO_ID;
+  assetSel.value = start;
+  await selectAsset(start);
   requestAnimationFrame(frame);
   document.body.dataset.ready = 'true';
 }

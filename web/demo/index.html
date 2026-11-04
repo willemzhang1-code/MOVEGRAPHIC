@@ -66,6 +66,7 @@
       label.range output { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
       input[type=range] { width: 100%; accent-color: var(--accent); }
       label.check { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+      #asset { width: 100%; }
       select { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
       dl { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; margin: 0; font-variant-numeric: tabular-nums; }
       dt { color: var(--muted); }
@@ -93,14 +94,14 @@
         </div>
         <aside>
           <section>
-            <h2>Track 0 · base</h2>
-            <div class="row">
-              <button data-base="idle">idle<kbd>1</kbd></button>
-              <button data-base="walk">walk<kbd>2</kbd></button>
-              <button id="jump">jump<kbd>space</kbd></button>
-            </div>
+            <h2>Asset</h2>
+            <select id="asset"></select>
           </section>
           <section>
+            <h2>Track 0 · animation</h2>
+            <div class="row" id="anims"></div>
+          </section>
+          <section id="layers">
             <h2>Track 1–2 · layers</h2>
             <div class="row">
               <button id="wave">wave<kbd>W</kbd></button>

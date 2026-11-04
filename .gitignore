@@ -3,3 +3,4 @@ node_modules/
 dist/
 web/demo/public/sinew.wasm
 *.log
+web/demo/public/examples/

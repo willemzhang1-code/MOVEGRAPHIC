@@ -17,3 +17,14 @@
 - 旋转混合走最短路径，crossfade 期间不记忆方向（大角度差混合可能翻转）。
 - `AnimationState.apply` 每帧从 setup pose 开始：未被任何动画 key 的属性回到 setup（Spine 会保留上一帧值）。宿主手动覆盖应放在 apply 之后。
 - 未实现：Path / Physics 约束、Clipping、Sequence、`.skel` 二进制、Spine 3.x；Spine 4.3 格式变化未验证。
+
+## 官方示例兼容性（Spine 4.2，20 个）
+
+`node tools/fetch-spine-examples.mjs` 下载到本地（不入库），`cargo run --release -p sinew-core --example compat` 扫描。
+
+| 状态 | 示例 |
+|---|---|
+| 导入 + 全部动画无错误，静态/动态画面目测正确 | spineboy, raptor, goblins, stretchyman, owl, hero, powerup, speedy, windmill, alien, chibi-stickers, snowglobe（静态）, celestial-circus（静态） |
+| 依赖未实现功能，画面有缺失或变形 | tank / vine / hero / stretchyman / mix-and-match（Path 约束）, coin / tank（Clipping）, celestial-circus / cloud-pot / sack / snowglobe（Physics）, dragon（Sequence） |
+
+M1 实现顺序按影响面：Path → Clipping → Physics → Sequence。

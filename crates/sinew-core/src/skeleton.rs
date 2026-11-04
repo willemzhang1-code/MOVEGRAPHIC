@@ -200,7 +200,7 @@ impl Skeleton {
             let data = self.data.clone();
             for (i, slot) in self.slots.iter_mut().enumerate() {
                 let name = match (self.skin, slot.attachment) {
-                    (Some(_), Some(r)) => Some(data.attachment(r).name.as_str()),
+                    (Some(_), Some(r)) => Some(data.skins[r.skin].keys[r.index].as_str()),
                     (None, _) => data.slots[i].attachment.as_deref(),
                     _ => None,
                 };

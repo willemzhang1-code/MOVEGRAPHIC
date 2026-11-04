@@ -138,6 +138,10 @@ export class SinewRenderer {
     return { texture, pma };
   }
 
+  deleteTexture(t: SinewTexture): void {
+    this.gl.deleteTexture(t.texture);
+  }
+
   begin(proj: Float32Array): void {
     this.proj = proj;
     this.drawCalls = 0;
