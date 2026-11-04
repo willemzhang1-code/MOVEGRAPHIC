@@ -47,7 +47,13 @@ pub enum Property {
     Transform(usize),
     /// Vertex offsets; the curve is a 0..1 percentage.
     Deform { slot: usize, attachment: u32 },
+    /// One physics parameter (0 inertia, 1 strength, 2 damping, 3 mass, 4 wind,
+    /// 5 gravity, 6 mix) of one constraint, or of all constraints with that
+    /// parameter marked global when `constraint == usize::MAX`.
+    Physics { constraint: usize, param: u8 },
 }
+
+pub const PHYSICS_GLOBAL: usize = usize::MAX;
 
 pub mod prop_kind {
     pub const ROTATE: u64 = 1;
@@ -66,6 +72,7 @@ pub mod prop_kind {
     pub const ATTACHMENT: u64 = 14;
     pub const DRAW_ORDER: u64 = 15;
     pub const INHERIT: u64 = 16;
+    pub const PHYSICS: u64 = 17;
 }
 
 /// Identifies one scalar-ish animatable property, used to decide which
@@ -110,6 +117,7 @@ impl Property {
             Property::Ik(i) => vec![prop_id(IK, i, 0)],
             Property::Transform(i) => vec![prop_id(TRANSFORM, i, 0)],
             Property::Deform { slot, attachment } => vec![prop_id(DEFORM, slot, attachment)],
+            Property::Physics { constraint, param } => vec![prop_id(PHYSICS, constraint & 0xFF_FFFF, param as u32)],
         }
     }
 }
@@ -509,7 +517,46 @@ fn apply_curve_channel(ch: &CurveChannel, sk: &mut Skeleton, time: f32, alpha: f
             m.scale_y = blend_abs(m.scale_y, m0.scale_y, v[4], alpha, blend);
             m.shear_y = blend_abs(m.shear_y, m0.shear_y, v[5], alpha, blend);
         }
+        Property::Physics { constraint, param } => {
+            let value = if param == 3 { 1.0 / v[0].max(1e-6) } else { v[0] };
+            let data = sk.data.clone();
+            for (i, d) in data.physics.iter().enumerate() {
+                if constraint != PHYSICS_GLOBAL && constraint != i {
+                    continue;
+                }
+                if constraint == PHYSICS_GLOBAL && !d.global[param as usize] {
+                    continue;
+                }
+                let setup = physics_param(&d.params, param);
+                let cur = physics_param_mut(&mut sk.physics[i].params, param);
+                *cur = blend_abs(*cur, setup, value, alpha, blend);
+            }
+        }
         Property::Deform { .. } => unreachable!(),
+    }
+}
+
+fn physics_param(p: &crate::model::PhysicsParams, i: u8) -> f32 {
+    match i {
+        0 => p.inertia,
+        1 => p.strength,
+        2 => p.damping,
+        3 => p.mass_inverse,
+        4 => p.wind,
+        5 => p.gravity,
+        _ => p.mix,
+    }
+}
+
+fn physics_param_mut(p: &mut crate::model::PhysicsParams, i: u8) -> &mut f32 {
+    match i {
+        0 => &mut p.inertia,
+        1 => &mut p.strength,
+        2 => &mut p.damping,
+        3 => &mut p.mass_inverse,
+        4 => &mut p.wind,
+        5 => &mut p.gravity,
+        _ => &mut p.mix,
     }
 }
 
@@ -566,6 +613,14 @@ fn reset_property(sk: &mut Skeleton, p: Property) {
         }
         Property::Transform(i) => sk.transforms[i].mix = sk.data.transforms[i].mix,
         Property::Deform { slot, .. } => sk.slots[slot].deform.clear(),
+        Property::Physics { constraint, .. } => {
+            let data = sk.data.clone();
+            for (i, d) in data.physics.iter().enumerate() {
+                if constraint == PHYSICS_GLOBAL || constraint == i {
+                    sk.physics[i].params = d.params;
+                }
+            }
+        }
     }
 }
 

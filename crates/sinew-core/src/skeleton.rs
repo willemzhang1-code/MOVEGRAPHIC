@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::constraints;
 use crate::math::{atan2_deg, Affine, Color, Transform, Vec2};
-use crate::model::{AttachmentRef, ConstraintRef, Inherit, SkeletonData, TransformMix};
+use crate::model::{AttachmentRef, ConstraintRef, Inherit, PhysicsParams, SkeletonData, TransformMix};
 
 #[derive(Clone, Debug)]
 pub struct Bone {
@@ -42,6 +42,44 @@ pub struct TransformConstraint {
     pub active: bool,
 }
 
+/// Simulation state of a physics constraint. Offsets are applied on top of
+/// the bone's animated world transform.
+#[derive(Clone, Copy, Debug)]
+pub struct PhysicsConstraint {
+    pub params: PhysicsParams,
+    pub active: bool,
+    pub(crate) reset: bool,
+    pub(crate) last: Vec2,
+    pub(crate) accum: f32,
+    /// Translation offset and velocity (world units).
+    pub(crate) offset: Vec2,
+    pub(crate) velocity: Vec2,
+    /// Rotation offset and velocity (degrees).
+    pub(crate) rotation: f32,
+    pub(crate) rotation_velocity: f32,
+    /// Scale offset (fraction) and velocity.
+    pub(crate) scale: f32,
+    pub(crate) scale_velocity: f32,
+}
+
+impl PhysicsConstraint {
+    fn new(params: PhysicsParams) -> Self {
+        PhysicsConstraint {
+            params,
+            active: true,
+            reset: true,
+            last: Vec2::ZERO,
+            accum: 0.0,
+            offset: Vec2::ZERO,
+            velocity: Vec2::ZERO,
+            rotation: 0.0,
+            rotation_velocity: 0.0,
+            scale: 0.0,
+            scale_velocity: 0.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpdateItem {
     Bone(usize),
@@ -56,6 +94,7 @@ pub struct Skeleton {
     pub draw_order: Vec<usize>,
     pub ik: Vec<IkConstraint>,
     pub transforms: Vec<TransformConstraint>,
+    pub physics: Vec<PhysicsConstraint>,
     pub skin: Option<usize>,
     pub x: f32,
     pub y: f32,
@@ -65,6 +104,8 @@ pub struct Skeleton {
     cache: Vec<UpdateItem>,
     children: Vec<Vec<usize>>,
     pub(crate) scratch: Vec<f32>,
+    /// Time the next `update_world` advances physics by.
+    pub(crate) physics_dt: f32,
 }
 
 impl Skeleton {
@@ -98,6 +139,7 @@ impl Skeleton {
             })
             .collect();
         let transforms = data.transforms.iter().map(|c| TransformConstraint { mix: c.mix, active: true }).collect();
+        let physics = data.physics.iter().map(|c| PhysicsConstraint::new(c.params)).collect();
         let mut sk = Skeleton {
             draw_order: (0..data.slots.len()).collect(),
             data,
@@ -105,6 +147,7 @@ impl Skeleton {
             slots,
             ik,
             transforms,
+            physics,
             skin: None,
             x: 0.0,
             y: 0.0,
@@ -114,6 +157,7 @@ impl Skeleton {
             cache: Vec::new(),
             children,
             scratch: Vec::new(),
+            physics_dt: 0.0,
         };
         sk.update_cache();
         sk.setup_pose();
@@ -140,6 +184,16 @@ impl Skeleton {
         }
         for (c, d) in self.transforms.iter_mut().zip(&data.transforms) {
             c.mix = d.mix;
+        }
+        for (c, d) in self.physics.iter_mut().zip(&data.physics) {
+            c.params = d.params;
+        }
+    }
+
+    /// Restarts all physics simulations from the current pose.
+    pub fn reset_physics(&mut self) {
+        for c in &mut self.physics {
+            c.reset = true;
         }
     }
 
@@ -234,13 +288,22 @@ impl Skeleton {
             let bones_active = self.bones[c.target].active && c.bones.iter().all(|&b| self.bones[b].active);
             self.transforms[i].active = in_skin && bones_active;
         }
+        for (i, c) in data.physics.iter().enumerate() {
+            let in_skin = !c.skin_required || skin.is_some_and(|s| s.physics.contains(&i));
+            self.physics[i].active = in_skin && self.bones[c.bone].active;
+        }
 
         let mut sorted = vec![false; data.bones.len()];
         let mut cache = Vec::new();
         for c in data.constraint_order() {
+            let single;
             let (active, target, constrained): (bool, usize, &[usize]) = match c {
                 ConstraintRef::Ik(i) => (self.ik[i].active, data.ik[i].target, &data.ik[i].bones),
                 ConstraintRef::Transform(i) => (self.transforms[i].active, data.transforms[i].target, &data.transforms[i].bones),
+                ConstraintRef::Physics(i) => {
+                    single = [data.physics[i].bone];
+                    (self.physics[i].active, data.physics[i].bone, &single[..])
+                }
             };
             if !active {
                 continue;
@@ -294,9 +357,17 @@ impl Skeleton {
                 UpdateItem::Bone(i) => self.update_bone_world(i),
                 UpdateItem::Constraint(ConstraintRef::Ik(i)) => constraints::apply_ik(self, i),
                 UpdateItem::Constraint(ConstraintRef::Transform(i)) => constraints::apply_transform(self, i),
+                UpdateItem::Constraint(ConstraintRef::Physics(i)) => constraints::apply_physics(self, i),
             }
         }
         self.cache = cache;
+        self.physics_dt = 0.0;
+    }
+
+    /// Like `update_world`, also advancing physics simulations by `dt` seconds.
+    pub fn update_world_with_physics(&mut self, dt: f32) {
+        self.physics_dt = dt.max(0.0);
+        self.update_world();
     }
 
     /// The skeleton's own transform, acting as the root bone's parent.

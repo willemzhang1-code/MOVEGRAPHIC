@@ -43,7 +43,7 @@ fn main() {
                 for _ in 0..steps {
                     st.update(1.0 / 30.0);
                     st.apply(&mut sk);
-                    sk.update_world();
+                    sk.update_world_with_physics(1.0 / 30.0);
                     sk.render(&mut out);
                     let nan = out.vertices.chunks_exact(6).any(|v| (0..4).any(|i| !f32::from_bits(v[i]).is_finite()));
                     if nan {

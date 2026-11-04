@@ -105,9 +105,7 @@ pub fn load_spine_json(text: &str) -> Result<SkeletonData, String> {
     if !arr(&root, "path").is_empty() {
         cx.warn("path constraints are not supported yet (M1)");
     }
-    if !arr(&root, "physics").is_empty() {
-        cx.warn("physics constraints are not supported yet (M1)");
-    }
+    read_physics(&mut cx, &root)?;
     read_skins(&mut cx, &root)?;
     read_events(&mut cx, &root);
     if let Some(anims) = obj(&root, "animations") {
@@ -236,6 +234,47 @@ fn read_transforms(cx: &mut Ctx, root: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn read_physics(cx: &mut Ctx, root: &Value) -> Result<(), String> {
+    for c in arr(root, "physics") {
+        let name = string(c, "name").unwrap_or_default().to_string();
+        let ctx = format!("physics constraint '{name}'");
+        let bone = cx.bone(string(c, "bone").unwrap_or_default(), &ctx)?;
+        let g = |k: &str| boolean(c, k, false);
+        cx.data.physics.push(PhysicsConstraintData {
+            name,
+            order: int(c, "order", 0) as i32,
+            skin_required: boolean(c, "skin", false),
+            bone,
+            x: num(c, "x", 0.0),
+            y: num(c, "y", 0.0),
+            rotate: num(c, "rotate", 0.0),
+            scale_x: num(c, "scaleX", 0.0),
+            shear_x: num(c, "shearX", 0.0),
+            limit: num(c, "limit", 5000.0),
+            fps: num(c, "fps", 60.0),
+            params: PhysicsParams {
+                inertia: num(c, "inertia", 1.0),
+                strength: num(c, "strength", 100.0),
+                damping: num(c, "damping", 1.0),
+                mass_inverse: 1.0 / num(c, "mass", 1.0).max(1e-6),
+                wind: num(c, "wind", 0.0),
+                gravity: num(c, "gravity", 0.0),
+                mix: num(c, "mix", 1.0),
+            },
+            global: [
+                g("inertiaGlobal"),
+                g("strengthGlobal"),
+                g("dampingGlobal"),
+                g("massGlobal"),
+                g("windGlobal"),
+                g("gravityGlobal"),
+                g("mixGlobal"),
+            ],
+        });
+    }
+    Ok(())
+}
+
 fn read_vertices(values: Vec<f32>, vertex_count: usize) -> Vertices {
     if values.len() == vertex_count * 2 {
         return Vertices::Plain(values);
@@ -284,6 +323,11 @@ fn read_skins(cx: &mut Ctx, root: &Value) -> Result<(), String> {
         for c in arr(s, "transform") {
             if let Some(i) = c.as_str().and_then(|n| cx.data.find_transform(n)) {
                 skin.transforms.push(i);
+            }
+        }
+        for c in arr(s, "physics") {
+            if let Some(i) = c.as_str().and_then(|n| cx.data.find_physics(n)) {
+                skin.physics.push(i);
             }
         }
         if let Some(slots) = obj(s, "attachments") {
@@ -593,9 +637,41 @@ fn read_animation(cx: &mut Ctx, name: &str, a: &Value) -> Result<Animation, Stri
         }
     }
 
-    for key in ["path", "physics"] {
-        if obj(a, key).is_some_and(|o| !o.is_empty()) {
-            cx.warn(format!("{key} timelines are not supported yet (M1)"));
+    if obj(a, "path").is_some_and(|o| !o.is_empty()) {
+        cx.warn("path timelines are not supported yet (M1)");
+    }
+    if let Some(phys) = obj(a, "physics") {
+        for (cname, timelines) in phys {
+            let constraint = if cname.is_empty() {
+                crate::animation::PHYSICS_GLOBAL
+            } else {
+                match cx.data.find_physics(cname) {
+                    Some(i) => i,
+                    None => {
+                        cx.warn(format!("{ctx}: unknown physics constraint '{cname}'"));
+                        continue;
+                    }
+                }
+            };
+            for (tl, frames) in timelines.as_object().into_iter().flatten() {
+                let param = match tl.as_str() {
+                    "inertia" => 0,
+                    "strength" => 1,
+                    "damping" => 2,
+                    "mass" => 3,
+                    "wind" => 4,
+                    "gravity" => 5,
+                    "mix" => 6,
+                    "reset" => continue,
+                    other => {
+                        cx.warn(format!("physics timeline '{other}' is not supported yet"));
+                        continue;
+                    }
+                };
+                let default = if param == 6 || param == 3 { 1.0 } else { 0.0 };
+                let frames = frames.as_array().map_or(&[][..], |v| v.as_slice());
+                anim.curves.push(curve_channel(Property::Physics { constraint, param }, frames, |f| vec![num(f, "value", default)]));
+            }
         }
     }
 

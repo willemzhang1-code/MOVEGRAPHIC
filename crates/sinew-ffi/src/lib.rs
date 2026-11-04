@@ -322,7 +322,13 @@ pub unsafe extern "C" fn sinew_instance_update(i: *mut SinewInstance, dt: f32) {
     let inst = &mut *i;
     inst.state.update(dt);
     inst.state.apply(&mut inst.sk);
-    inst.sk.update_world();
+    inst.sk.update_world_with_physics(dt * inst.state.time_scale);
+}
+
+/// Restarts physics simulations from the current pose (e.g. after a teleport).
+#[no_mangle]
+pub unsafe extern "C" fn sinew_instance_reset_physics(i: *mut SinewInstance) {
+    (&mut *i).sk.reset_physics();
 }
 
 /// Builds render buffers; returns the batch count.
