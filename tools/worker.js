@@ -12,6 +12,9 @@ const TYPES = {
   wasm: 'application/wasm',
   json: 'application/json; charset=utf-8',
   png: 'image/png',
+  gif: 'image/gif',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
   webp: 'image/webp',
   svg: 'image/svg+xml',
   txt: 'text/plain; charset=utf-8',
@@ -105,11 +108,16 @@ const PARTS = {
 async function scoutBoxes(env, dataUri, template) {
   const names = PARTS[template] ?? PARTS.humanoid;
   const box = { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 };
-  const schema = { type: 'object', properties: Object.fromEntries(names.map((k) => [k, box])) };
+  const properties = Object.fromEntries(names.map((k) => [k, box]));
+  if (template === 'humanoid') properties.facing = { type: 'string', enum: ['profile', 'three_quarter', 'front', 'back'] };
+  const schema = { type: 'object', properties };
   const prompt =
     `You are a 2D animation rigging assistant. The image shows one full-body game character. ` +
     `Give a tight bounding box for each visible body part as [x0, y0, x1, y1], normalised to the image (0..1, origin top-left). ` +
-    `"left/right of image" means screen side. Include the whole limb from shoulder or hip to the hand or foot. Omit parts that do not exist.\nParts: ${names.join(', ')}`;
+    `"left/right of image" means screen side. Include the whole limb from shoulder or hip to the hand or foot. Omit parts that do not exist.\nParts: ${names.join(', ')}` +
+    (template === 'humanoid'
+      ? `\nAlso "facing": "profile" if the body is seen from the side (only one shoulder and the far leg mostly hidden behind the near one), "three_quarter" if turned partly toward the viewer with both shoulders visible, "front" if facing the viewer, "back" if facing away.`
+      : '');
   const r = await env.AI.run('@cf/meta/llama-4-scout-17b-16e-instruct', {
     messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: dataUri } }] }],
     response_format: { type: 'json_schema', json_schema: schema },
@@ -126,7 +134,8 @@ async function scoutBoxes(env, dataUri, template) {
       if (x1 > x0 && y1 > y0) boxes[k] = [x0, y0, x1, y1];
     }
   }
-  return boxes;
+  const facing = ['profile', 'three_quarter', 'front', 'back'].includes(out?.facing) ? out.facing : undefined;
+  return { boxes, facing };
 }
 
 async function moondream(env, dataUri, template) {
@@ -172,7 +181,10 @@ async function keypoints(request, env, url) {
   if (!JOINTS[template]) return json({ error: 'unknown template' }, 400);
   const t0 = Date.now();
   try {
-    if (model === 'boxes') return json({ template, model, ms: Date.now() - t0, boxes: await scoutBoxes(env, dataUri, template) });
+    if (model === 'boxes') {
+      const { boxes, facing } = await scoutBoxes(env, dataUri, template);
+      return json({ template, model, ms: Date.now() - t0, boxes, facing });
+    }
     const joints = model === 'moondream' ? await moondream(env, dataUri, template) : await scout(env, dataUri, template);
     return json({ template, model, ms: Date.now() - t0, joints });
   } catch (e) {

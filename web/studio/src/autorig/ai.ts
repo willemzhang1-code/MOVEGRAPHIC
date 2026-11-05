@@ -38,7 +38,10 @@ function snapshot(src: Source): HTMLCanvasElement {
 
 export type Boxes = Record<string, [number, number, number, number]>;
 
-export async function requestBoxes(src: Source, template: TemplateId): Promise<Boxes> {
+/** How the model sees the character turned (humanoids). */
+export type Facing = 'profile' | 'three_quarter' | 'front' | 'back';
+
+export async function requestBoxes(src: Source, template: TemplateId): Promise<Boxes & { facing?: Facing }> {
   const image = snapshot(src).toDataURL('image/png');
   let res: Response;
   try {
@@ -53,7 +56,9 @@ export async function requestBoxes(src: Source, template: TemplateId): Promise<B
   if (res.status === 404) throw new Error('AI service is only available on the deployed site');
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `AI service error ${res.status}`);
-  return body.boxes ?? {};
+  const boxes: Boxes & { facing?: Facing } = { ...(body.boxes ?? {}) };
+  if (body.facing) Object.defineProperty(boxes, 'facing', { value: body.facing, enumerable: false });
+  return boxes;
 }
 
 /** Virtual layers: silhouette ∩ each box (document space). */

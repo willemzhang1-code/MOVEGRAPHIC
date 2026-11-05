@@ -617,7 +617,9 @@ export function App() {
                     const boxes = await requestBoxes(src, doc.template);
                     const hint = jointsFromBoxes(src, doc.template, boxes, doc.joints);
                     if (!hint) throw new Error('The model did not recognise enough body parts');
-                    rerig({ joints: hint.joints, groups: { ...doc.groups, tail: hint.tail || !!doc.groups?.tail }, keepMesh: true, view: viewFromJoints(hint.joints) });
+                    // The model's read of the facing beats the joint layout (a profile's far hand also sits behind the body).
+                    const view = boxes.facing ? (boxes.facing === 'profile' ? 'side' : 'front') : viewFromJoints(hint.joints);
+                    rerig({ joints: hint.joints, groups: { ...doc.groups, tail: hint.tail || !!doc.groups?.tail }, keepMesh: true, view });
                   } catch (e) {
                     setError(e instanceof Error ? e.message : String(e));
                   } finally {
