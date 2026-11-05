@@ -3,7 +3,7 @@
 import type { Mesh } from './autorig/mesh';
 import type { BoneGeom, CustomBone, Weights } from './autorig/rig';
 export type { Weights };
-import type { Pt, TemplateId } from './autorig/templates';
+import type { Pt, TemplateId, View } from './autorig/templates';
 
 export type Ease = 'linear' | 'smooth' | 'stepped';
 
@@ -62,6 +62,8 @@ export interface RigDoc {
   animations: AnimDoc[];
   /** Secondary motion on tail / hair / cloth bones (default on). */
   physics?: boolean;
+  /** Facing the motion library is built for (default side). */
+  view?: View;
 }
 
 export const vertexCount = (doc: RigDoc) => doc.parts.reduce((s, p) => s + p.mesh.points.length / 2, 0);

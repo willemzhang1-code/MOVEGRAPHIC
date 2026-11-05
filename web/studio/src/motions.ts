@@ -4,7 +4,7 @@
 // the character height. Any rig built from a template can use them as-is.
 
 import type { AnimDoc, Channel, ChannelProp, Key } from './doc';
-import type { TemplateId } from './autorig/templates';
+import type { TemplateId, View } from './autorig/templates';
 
 type Spec = [number, ...number[]][];
 
@@ -54,12 +54,40 @@ function gait(d: number, thigh: number, knee: number, arm: number, forearm: numb
   ];
 }
 
+/**
+ * Walking seen from the front / 3-4: legs lift in place (thigh shortened
+ * along the bone, which reads as the knee coming toward the viewer), arms
+ * barely sway, the body bobs. Side-view swings would cross the legs and fling
+ * the arms out.
+ */
+function frontGait(d: number, lift: number, arm: number, bob: number): AnimDoc['channels'] {
+  const n = 16;
+  const legs = (side: 'l' | 'r', phase: number, out: number) => {
+    const up = (p: number) => pos(Math.sin(TAU * (p + phase)));
+    return [
+      cyc(`thigh_${side}`, 'scale', d, n, (p) => [1 - lift * up(p), 1]),
+      cyc(`thigh_${side}`, 'rotate', d, n, (p) => [out * 3 * up(p)]),
+      cyc(`foot_${side}`, 'rotate', d, n, (p) => [out * -4 * up(p)]),
+      cyc(`upper_arm_${side}`, 'rotate', d, n, (p) => [out * arm * Math.sin(TAU * (p + phase + 0.5))]),
+      cyc(`forearm_${side}`, 'rotate', d, n, (p) => [-out * arm * 0.5 * (0.5 + 0.5 * Math.sin(TAU * (p + phase + 0.5)))]),
+    ];
+  };
+  return [
+    // Image-left limbs are "_l"; outward for them is clockwise.
+    ...legs('l', 0, -1),
+    ...legs('r', 0.5, 1),
+    cyc('hip', 'translate', d, n, (p) => [0, bob * Math.abs(Math.cos(TAU * p)) - bob]),
+    cyc('chest', 'rotate', d, n, (p) => [1.5 * Math.sin(TAU * p)]),
+    cyc('head', 'rotate', d, n, (p) => [-1 * Math.sin(TAU * p)]),
+  ];
+}
+
 const tailWag = (d: number, amp: number) => [
   cyc('tail1', 'rotate', d, 8, (p) => [amp * Math.sin(TAU * p)]),
   cyc('tail2', 'rotate', d, 8, (p) => [amp * 1.5 * Math.sin(TAU * p - 1.1)]),
 ];
 
-function humanoid(): AnimDoc[] {
+function humanoid(view: View): AnimDoc[] {
   const limbs = (side: string, spec: Spec) => [smooth(`upper_arm_${side}`, 'rotate', spec)];
   return [
     anim('idle', 2, true, [
@@ -72,8 +100,12 @@ function humanoid(): AnimDoc[] {
       smooth('hip', 'translate', [[0, 0, 0], [1, 0, -0.006], [2, 0, 0]]),
       ...tailWag(2, 6),
     ]),
-    anim('walk', 1, true, [...gait(1, 24, 38, 20, 14, -4, 0.008), ...tailWag(1, 9)]),
-    anim('run', 0.6, true, [...gait(0.6, 40, 75, 40, 60, -12, 0.02), ...tailWag(0.6, 7)]),
+    view === 'front'
+      ? anim('walk', 1, true, [...frontGait(1, 0.14, 4, 0.012), ...tailWag(1, 9)])
+      : anim('walk', 1, true, [...gait(1, 24, 38, 20, 14, -4, 0.008), ...tailWag(1, 9)]),
+    view === 'front'
+      ? anim('run', 0.6, true, [...frontGait(0.6, 0.24, 9, 0.03), ...tailWag(0.6, 7)])
+      : anim('run', 0.6, true, [...gait(0.6, 40, 75, 40, 60, -12, 0.02), ...tailWag(0.6, 7)]),
     anim('jump', 1, false, [
       smooth('hip', 'translate', [[0, 0, 0], [0.15, 0, -0.06], [0.35, 0, 0.35], [0.55, 0, 0.4], [0.8, 0, 0], [0.9, 0, -0.04], [1, 0, 0]]),
       ...['l', 'r'].flatMap((s) => [
@@ -166,6 +198,6 @@ function blob(): AnimDoc[] {
   ];
 }
 
-export function motionLibrary(template: TemplateId): AnimDoc[] {
-  return template === 'humanoid' ? humanoid() : template === 'quadruped' ? quadruped() : blob();
+export function motionLibrary(template: TemplateId, view: View = 'side'): AnimDoc[] {
+  return template === 'humanoid' ? humanoid(view) : template === 'quadruped' ? quadruped() : blob();
 }

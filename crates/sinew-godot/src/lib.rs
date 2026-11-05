@@ -4,8 +4,9 @@
 
 use std::sync::Arc;
 
-use godot::classes::canvas_item_material::BlendMode as GdBlendMode;
-use godot::classes::{CanvasItemMaterial, FileAccess, INode2D, Image, ImageTexture, Node2D, RenderingServer, ResourceLoader, Texture2D};
+use godot::classes::rendering_server::{ArrayCustomFormat, ArrayFormat, ArrayType, PrimitiveType};
+use godot::classes::{FileAccess, INode2D, Image, ImageTexture, Node2D, RenderingServer, ResourceLoader, Shader, ShaderMaterial, Texture2D};
+use godot::obj::EngineBitfield;
 use godot::prelude::*;
 use sinew_core::import::load_spine_json;
 use sinew_core::render::VERTEX_WORDS;
@@ -21,7 +22,58 @@ struct Loaded {
     skeleton: Skeleton,
     state: AnimationState,
     textures: Vec<Gd<Texture2D>>,
-    pma: bool,
+    /// Per atlas page: texture has premultiplied alpha.
+    pma: Vec<bool>,
+}
+
+/// Shader per blend mode: two-color tint (dark color in CUSTOM0), output
+/// premultiplied, blend chosen so the result matches Spine's PMA blending.
+fn blend_shader(blend: u32) -> String {
+    let (mode, out) = match blend {
+        1 => ("blend_add", "vec4(rgb, 1.0)"),
+        2 => ("blend_mul", "vec4(rgb + (1.0 - a), 1.0)"),
+        3 => ("blend_premul_alpha", "vec4(rgb, max(rgb.r, max(rgb.g, rgb.b)))"),
+        _ => ("blend_premul_alpha", "vec4(rgb, a)"),
+    };
+    format!(
+        "shader_type canvas_item;\nrender_mode {mode};\nuniform bool straight_alpha = true;\nvarying vec4 light;\nvarying vec3 dark;\n\
+         void vertex() {{ light = COLOR; dark = CUSTOM0.rgb; }}\n\
+         void fragment() {{\n  vec4 t = texture(TEXTURE, UV);\n  if (straight_alpha) {{ t.rgb *= t.a; }}\n\
+           vec3 rgb = (t.rgb * light.rgb + (t.a - t.rgb) * dark) * light.a;\n  float a = t.a * light.a;\n  COLOR = {out};\n}}\n"
+    )
+}
+
+/// Child canvas items (one per render batch) and their meshes.
+#[derive(Default)]
+struct DrawPool {
+    items: Vec<Rid>,
+    meshes: Vec<Rid>,
+    /// (blend, premultiplied texture) -> material.
+    materials: Vec<((u32, bool), Gd<ShaderMaterial>)>,
+}
+
+impl DrawPool {
+    fn material(&mut self, blend: u32, pma: bool) -> Rid {
+        if let Some((_, m)) = self.materials.iter().find(|(k, _)| *k == (blend, pma)) {
+            return m.get_rid();
+        }
+        let mut shader = Shader::new_gd();
+        shader.set_code(&blend_shader(blend));
+        let mut m = ShaderMaterial::new_gd();
+        m.set_shader(&shader);
+        m.set_shader_parameter("straight_alpha", &(!pma).to_variant());
+        let rid = m.get_rid();
+        self.materials.push(((blend, pma), m));
+        rid
+    }
+
+    fn free(&mut self) {
+        let mut rs = RenderingServer::singleton();
+        for r in self.items.drain(..).chain(self.meshes.drain(..)) {
+            rs.free_rid(r);
+        }
+        self.materials.clear();
+    }
 }
 
 /// A skeleton animated by the RABBIT core.
@@ -49,6 +101,13 @@ pub struct RabbitSkeleton2D {
     default_mix: f32,
     loaded: Option<Loaded>,
     buffers: RenderBuffers,
+    pool: DrawPool,
+}
+
+impl Drop for RabbitSkeleton2D {
+    fn drop(&mut self) {
+        self.pool.free();
+    }
 }
 
 #[godot_api]
@@ -65,6 +124,7 @@ impl INode2D for RabbitSkeleton2D {
             default_mix: 0.2,
             loaded: None,
             buffers: RenderBuffers::default(),
+            pool: DrawPool::default(),
         }
     }
 
@@ -96,9 +156,11 @@ impl INode2D for RabbitSkeleton2D {
     fn draw(&mut self) {
         let Some(l) = &self.loaded else { return };
         l.skeleton.render(&mut self.buffers);
-        let item = self.base().get_canvas_item();
+        let parent = self.base().get_canvas_item();
         let mut rs = RenderingServer::singleton();
         let v = &self.buffers.vertices;
+        let format = ArrayFormat::FLAG_USE_2D_VERTICES | ArrayFormat::from_ord((ArrayCustomFormat::RGBA8_UNORM.ord() as u64) << ArrayFormat::CUSTOM0_SHIFT.ord());
+        let mut used = 0;
         for b in &self.buffers.batches {
             let Some(tex) = l.textures.get(b.page as usize) else { continue };
             let idx = &self.buffers.indices[b.first_index as usize..(b.first_index + b.index_count) as usize];
@@ -109,16 +171,44 @@ impl INode2D for RabbitSkeleton2D {
             let mut points = PackedVector2Array::new();
             let mut uvs = PackedVector2Array::new();
             let mut colors = PackedColorArray::new();
+            let mut darks = PackedByteArray::new();
             for i in lo..=hi {
                 let o = i as usize * VERTEX_WORDS;
                 points.push(Vector2::new(f32::from_bits(v[o]), -f32::from_bits(v[o + 1])));
                 uvs.push(Vector2::new(f32::from_bits(v[o + 2]), f32::from_bits(v[o + 3])));
                 let c = v[o + 4];
-                let (r, g, bl, a) = ((c & 0xff) as f32 / 255.0, ((c >> 8) & 0xff) as f32 / 255.0, ((c >> 16) & 0xff) as f32 / 255.0, (c >> 24) as f32 / 255.0);
-                colors.push(if l.pma { Color::from_rgba(r * a, g * a, bl * a, a) } else { Color::from_rgba(r, g, bl, a) });
+                colors.push(Color::from_rgba8((c & 0xff) as u8, (c >> 8) as u8, (c >> 16) as u8, (c >> 24) as u8));
+                let d = v[o + 5];
+                darks.extend_array(&PackedByteArray::from(&[d as u8, (d >> 8) as u8, (d >> 16) as u8, 0][..]));
             }
             let indices: PackedInt32Array = idx.iter().map(|&i| (i - lo) as i32).collect();
-            rs.canvas_item_add_triangle_array_ex(item, &indices, &points, &colors).uvs(&uvs).texture(tex.get_rid()).done();
+            let mut arrays = VarArray::new();
+            arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
+            arrays.set(ArrayType::VERTEX.ord() as usize, &points.to_variant());
+            arrays.set(ArrayType::COLOR.ord() as usize, &colors.to_variant());
+            arrays.set(ArrayType::TEX_UV.ord() as usize, &uvs.to_variant());
+            arrays.set(ArrayType::CUSTOM0.ord() as usize, &darks.to_variant());
+            arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
+
+            if used == self.pool.items.len() {
+                let item = rs.canvas_item_create();
+                rs.canvas_item_set_parent(item, parent);
+                self.pool.items.push(item);
+                self.pool.meshes.push(rs.mesh_create());
+            }
+            let (item, mesh) = (self.pool.items[used], self.pool.meshes[used]);
+            let pma = l.pma.get(b.page as usize).copied().unwrap_or(false);
+            let material = self.pool.material(b.blend, pma);
+            rs.mesh_clear(mesh);
+            rs.mesh_add_surface_from_arrays_ex(mesh, PrimitiveType::TRIANGLES, &arrays).compress_format(format).done();
+            rs.canvas_item_clear(item);
+            rs.canvas_item_set_material(item, material);
+            rs.canvas_item_set_draw_index(item, used as i32);
+            rs.canvas_item_add_mesh_ex(item, mesh).texture(tex.get_rid()).done();
+            used += 1;
+        }
+        for &item in &self.pool.items[used..] {
+            rs.canvas_item_clear(item);
         }
     }
 }
@@ -168,7 +258,7 @@ impl RabbitSkeleton2D {
             godot_warn!("RabbitSkeleton2D: {w}");
         }
         let mut textures = Vec::new();
-        let mut pma = false;
+        let mut pma = Vec::new();
         if !self.atlas_file.is_empty() {
             let Some(text) = read_text(&self.atlas_file) else {
                 godot_error!("RabbitSkeleton2D: cannot read atlas '{}'", self.atlas_file);
@@ -192,7 +282,7 @@ impl RabbitSkeleton2D {
                     }
                 }
             }
-            pma = atlas.pages.iter().any(|p| p.pma);
+            pma = atlas.pages.iter().map(|p| p.pma).collect();
             for m in data.bind_atlas(&atlas) {
                 godot_warn!("RabbitSkeleton2D: atlas region not found: {m}");
             }
@@ -209,9 +299,6 @@ impl RabbitSkeleton2D {
         }
         state.apply(&mut skeleton);
         skeleton.update_world();
-        let mut mat = CanvasItemMaterial::new_gd();
-        mat.set_blend_mode(if pma { GdBlendMode::PREMULT_ALPHA } else { GdBlendMode::MIX });
-        self.base_mut().set_material(&mat);
         self.loaded = Some(Loaded { data, skeleton, state, textures, pma });
         self.base_mut().queue_redraw();
         true

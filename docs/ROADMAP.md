@@ -40,4 +40,4 @@
 | 内核 | 骨骼/5 种继承、Slot/Skin、Region/Mesh/加权/Linked、IK、Transform、Path、Physics、Clipping、Sequence、多轨混合、事件、Spine 4.2 JSON 导入；官方 105 个示例动画中 99 个逐骨骼一致 | 状态机内核、`.snw` 二进制、Spine `.skel` 导入 |
 | Studio | 单图抠图/网格/骨架/权重、分层 PSD（每层网格 + 按图层名推关节）、尾巴/头发/披风自动物理、AI 关节（Workers AI 部位框）、动作库（人形 8 / 四足 5 / 团子 3）、时间轴打关键帧 + 逐 key 缓动（linear/smooth/stepped）、手动加骨（可开物理）、权重笔刷（热力图、按图层限定）、撤销、导出 Spine 4.2 zip + GIF | 改网格、曲线编辑器、状态机编辑、协作 |
 | AI | 部位框 → 关节 | 拆件 + 遮挡补全、视频/文本 → 动作 |
-| 运行时 | Web（WASM + WebGL2）、Godot 4.4+（GDExtension，Godot 4.7 headless 自动测试通过）、Unity 2021.3+（UPM 包：C# 层 .NET 实测、Unity 2021.3 参考程序集编译检查；Win/Mac/Linux/Android/iOS 原生库由 CI 构建） | Unity 编辑器内实机验证、Unreal；Godot 端混合模式、双色 tint |
+| 运行时 | Web（WASM + WebGL2）、Godot 4.4+（GDExtension：逐批次混合模式 + 双色 tint，Godot 4.7 自动测试通过）、Unity 2021.3+（UPM 包：C# 层 .NET 实测、Unity 2021.3 参考程序集编译检查；Win/Mac/Linux/Android/iOS 原生库由 CI 构建） | Unity 编辑器内实机验证、Unreal |

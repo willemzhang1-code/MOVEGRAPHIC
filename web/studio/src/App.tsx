@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SinewRuntime } from '@sinew/runtime';
-import { buildDoc, cutout, DEFAULT_DENSITY, guessJoints, sourceFromCutout, sourceFromProject, sourceFromPsd, TEMPLATES, type Pt, type Source, type TemplateId } from './autorig';
+import { buildDoc, cutout, DEFAULT_DENSITY, guessJoints, sourceFromCutout, sourceFromProject, sourceFromPsd, TEMPLATES, viewFromJoints, type Pt, type Source, type TemplateId } from './autorig';
 import { compile, pageFile, sampleChannel, triangleCount, vertexCount, type AnimDoc, type Channel, type RigDoc } from './doc';
 import { motionLibrary } from './motions';
 import { Timeline } from './Timeline';
 import { Viewport, type RigTool } from './Viewport';
-import type { CustomBone } from './autorig';
+import type { CustomBone, View } from './autorig';
 import { jointsFromBoxes, requestBoxes } from './autorig/ai';
 import { renderGif } from './gif';
 import { zip } from './zip';
@@ -207,7 +207,13 @@ export function App() {
   }
 
   // ------------------------------------------------------------------ rig edits
-  function rerig(o: { template?: TemplateId; joints?: Record<string, Pt>; groups?: Record<string, boolean>; density?: number; keepMesh?: boolean; customBones?: CustomBone[] }) {
+  /** Animations with the motion-library ones rebuilt for `view` (user animations kept). */
+  function withLibrary(d: RigDoc, view: View): AnimDoc[] {
+    const lib = motionLibrary(d.template, view);
+    return d.animations.map((a) => lib.find((m) => m.name === a.name) ?? a);
+  }
+
+  function rerig(o: { template?: TemplateId; joints?: Record<string, Pt>; groups?: Record<string, boolean>; density?: number; keepMesh?: boolean; customBones?: CustomBone[]; view?: View }) {
     if (!doc || !src) return;
     const template = o.template ?? doc.template;
     const sameTemplate = template === doc.template;
@@ -218,7 +224,8 @@ export function App() {
       groups: o.groups ?? (sameTemplate && !o.joints ? doc.groups : o.joints && sameTemplate ? doc.groups : undefined),
       meshes: o.keepMesh ? doc.parts.map((p) => p.mesh) : undefined,
       customBones: o.customBones ?? (sameTemplate ? doc.customBones : []),
-      animations: sameTemplate ? doc.animations : motionLibrary(template),
+      animations: !sameTemplate ? undefined : o.view && o.view !== doc.view ? withLibrary(doc, o.view) : doc.animations,
+      view: o.view ?? (sameTemplate ? doc.view : undefined),
     });
     commit(next);
     if (!sameTemplate) setAnim(next.animations[0]?.name ?? 'idle');
@@ -392,7 +399,7 @@ export function App() {
   });
 
   const selectedRotation = current && selectedBone ? rotationAt(current, selectedBone, time) : null;
-  const missing = doc ? motionLibrary(doc.template).filter((m) => !doc.animations.some((a) => a.name === m.name)) : [];
+  const missing = doc ? motionLibrary(doc.template, doc.view).filter((m) => !doc.animations.some((a) => a.name === m.name)) : [];
 
   return (
     <div className="app">
@@ -569,6 +576,20 @@ export function App() {
                 </>
               )}
               <h3>Skeleton</h3>
+              {doc.template === 'humanoid' && (
+                <>
+                  <div className="row seg" title="Motions are built for this view">
+                    {(['side', 'front'] as View[]).map((v) => (
+                      <button key={v} className={(doc.view ?? 'side') === v ? 'on' : ''} onClick={() => {
+                        if ((doc.view ?? 'side') === v) return;
+                        commit({ ...doc, view: v, animations: withLibrary(doc, v) });
+                      }}>
+                        {v === 'side' ? 'Side view' : 'Front / ¾ view'}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
               <label className="field">
                 Template
                 <select value={doc.template} onChange={(e) => rerig({ template: e.target.value as TemplateId, joints: undefined })}>
@@ -594,7 +615,7 @@ export function App() {
                     const boxes = await requestBoxes(src, doc.template);
                     const hint = jointsFromBoxes(src, doc.template, boxes, doc.joints);
                     if (!hint) throw new Error('The model did not recognise enough body parts');
-                    rerig({ joints: hint.joints, groups: { ...doc.groups, tail: hint.tail || !!doc.groups?.tail }, keepMesh: true });
+                    rerig({ joints: hint.joints, groups: { ...doc.groups, tail: hint.tail || !!doc.groups?.tail }, keepMesh: true, view: viewFromJoints(hint.joints) });
                   } catch (e) {
                     setError(e instanceof Error ? e.message : String(e));
                   } finally {
@@ -658,7 +679,7 @@ export function App() {
               </ul>
               <div className="row wrap">
                 <button onClick={() => {
-                  const lib = motionLibrary(doc.template).find((m) => m.name === current.name);
+                  const lib = motionLibrary(doc.template, doc.view).find((m) => m.name === current.name);
                   if (lib) updateAnim(() => lib);
                 }}>Reset</button>
                 <button onClick={() => {

@@ -23,10 +23,24 @@ export interface BoneDef {
   group?: string;
 }
 
+/** Which way the character faces: side (profile, facing right) or front / 3-4. */
+export type View = 'side' | 'front';
+
+/** Front / 3-4 when the hands hang clear of the body on opposite sides. */
+export function viewFromJoints(j: Record<string, Pt>): View {
+  const { wrist_l: wl, wrist_r: wr, chest, ground, head_top: top } = j;
+  if (!wl || !wr || !chest || !ground || !top) return 'side';
+  const d = Math.abs(ground.y - top.y) * 0.07;
+  const lo = Math.min(wl.x, wr.x);
+  const hi = Math.max(wl.x, wr.x);
+  return lo < chest.x - d && hi > chest.x + d ? 'front' : 'side';
+}
+
 export interface Guess {
   joints: Record<string, Pt>;
   /** Optional groups detected in the image (e.g. a tail). */
   groups: Record<string, boolean>;
+  view?: View;
 }
 
 export interface Template {
@@ -203,6 +217,31 @@ const humanoid: Template = {
         if (s0 > c.r && s0 - c.r < H * 0.08 && e0 - s0 < H * 0.12) wrist_r = { x: mid, y };
       }
     }
+    // Front / 3-4 view: an arm-like run hangs clear of the trunk on both sides
+    // (A-pose or relaxed arms). Then each side's lowest such run is its hand.
+    // Legs' outer extent just below the crotch: below the pelvis a hand must lie outside it.
+    const legSpan = legRuns(pelvis.y + H * 0.06);
+    const legX0 = legSpan.length ? legSpan[0][0] : pelvis.x - H * 0.06;
+    const legX1 = legSpan.length ? legSpan[legSpan.length - 1][1] : pelvis.x + H * 0.06;
+    const side = (dir: -1 | 1) => {
+      let hand: Pt | null = null;
+      for (let y = shoulderY + armLen * 0.35; y < pelvis.y + armLen * 0.35 && y < bottom - H * 0.2; y++) {
+        const c = coreAt(y);
+        for (const [s0, e0] of bigRuns(y)) {
+          const gap = dir < 0 ? c.l - e0 : s0 - c.r;
+          const clearOfLegs = y < pelvis.y - H * 0.01 || (dir < 0 ? e0 < legX0 - H * 0.01 : s0 > legX1 + H * 0.01);
+          if (clearOfLegs && gap > H * 0.01 && gap < H * 0.25 && e0 - s0 < H * 0.12) hand = { x: (s0 + e0) / 2, y };
+        }
+      }
+      return hand;
+    };
+    const handL = side(-1);
+    const handR = side(1);
+    const front = !!(handL && handR && Math.abs(handL.y - handR.y) < H * 0.15);
+    if (front) {
+      wrist_l = handL!;
+      wrist_r = handR!;
+    }
     const elbow_l = { x: (shoulder_l.x + wrist_l.x) / 2 - H * 0.01, y: (shoulder_l.y + wrist_l.y) / 2 };
     const elbow_r = { x: (shoulder_r.x + wrist_r.x) / 2 + H * 0.01, y: (shoulder_r.y + wrist_r.y) / 2 };
     // Legs.
@@ -222,6 +261,7 @@ const humanoid: Template = {
       const r = row(y);
       if (r.width && r.left < c.l - H * 0.02 && r.left < pelvis.x - halfW - H * 0.12 && (!tailTip || r.left < tailTip.x)) tailTip = { x: r.left, y };
     }
+    if (front && tailTip && handL && Math.abs(tailTip.y - handL.y) < H * 0.08) tailTip = null; // that was a hand
     const tail_base = { x: pelvis.x - halfW * 0.8, y: pelvis.y - H * 0.03 };
     const tip = tailTip ?? { x: tail_base.x - H * 0.15, y: tail_base.y - H * 0.05 };
     return {
@@ -234,6 +274,7 @@ const humanoid: Template = {
         tail_base, tail_mid: lerp(tail_base, tip, 0.5), tail_tip: tip,
       },
       groups: { tail: tailTip !== null },
+      view: front ? 'front' : 'side',
     };
   },
 };

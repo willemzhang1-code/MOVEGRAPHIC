@@ -5,14 +5,14 @@ import { dangles, jointsFromLayers } from './hints';
 import { assignBones, computeWeights, resolveBones, toWorld, type BoneGeom, type CustomBone } from './rig';
 export type { CustomBone } from './rig';
 import type { Source } from './source';
-import { TEMPLATES, type Pt, type TemplateId } from './templates';
+import { TEMPLATES, type Pt, type TemplateId, type View } from './templates';
 
 export { cutout } from './mask';
 export type { Cutout } from './mask';
 export { sourceFromCutout, sourceFromProject, sourceFromPsd } from './source';
 export type { Source } from './source';
-export { TEMPLATES } from './templates';
-export type { Pt, TemplateId } from './templates';
+export { TEMPLATES, viewFromJoints } from './templates';
+export type { Pt, TemplateId, View } from './templates';
 
 /** Vertices along the character height. */
 export const DEFAULT_DENSITY = 30;
@@ -31,6 +31,7 @@ export interface RigOptions {
   meshes?: Mesh[];
   customBones?: CustomBone[];
   animations?: AnimDoc[];
+  view?: View;
 }
 
 function offsetMesh(m: Mesh, dx: number, dy: number, w: number, h: number): Mesh {
@@ -52,10 +53,11 @@ function offsetMesh(m: Mesh, dx: number, dy: number, w: number, h: number): Mesh
 }
 
 /** Joint guess: silhouette heuristics, refined by named layers when available. */
-export function guessJoints(src: Source, template: TemplateId): { joints: Record<string, Pt>; groups: Record<string, boolean> } {
+export function guessJoints(src: Source, template: TemplateId): { joints: Record<string, Pt>; groups: Record<string, boolean>; view: View } {
   const g = TEMPLATES[template].guess(src.mask, src.width, src.height);
+  const view = g.view ?? 'side';
   const hint = src.parts.length > 1 ? jointsFromLayers(template, src.parts, g.joints) : null;
-  return hint ? { joints: hint.joints, groups: { ...g.groups, tail: hint.tail } } : g;
+  return hint ? { joints: hint.joints, groups: { ...g.groups, tail: hint.tail }, view } : { ...g, view };
 }
 
 /** Two-bone physics chains for hair / cloth layers, hanging from head or chest. */
@@ -83,6 +85,7 @@ export function buildDoc(src: Source, o: RigOptions): RigDoc {
   const guess = o.joints && o.groups ? null : guessJoints(src, o.template);
   const joints = o.joints ?? guess!.joints;
   const groups = o.groups ?? guess?.groups ?? {};
+  const view = o.view ?? guess?.view ?? 'side';
   const spacing = Math.max(5, characterHeight(joints) / (o.density ?? DEFAULT_DENSITY));
   const bones = resolveBones(t, joints, groups, o.customBones ?? []);
   if (src.parts.length > 1 && o.template === 'humanoid') addDangles(bones, src, joints);
@@ -103,6 +106,7 @@ export function buildDoc(src: Source, o: RigOptions): RigDoc {
     parts,
     pages: src.pages.map((c) => ({ width: c.width, height: c.height })),
     bones,
-    animations: o.animations ?? motionLibrary(o.template),
+    animations: o.animations ?? motionLibrary(o.template, view),
+    view,
   };
 }
