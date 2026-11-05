@@ -5,6 +5,7 @@ import { compile, pageFile, sampleChannel, triangleCount, vertexCount, type Anim
 import { motionLibrary } from './motions';
 import { Timeline } from './Timeline';
 import { Viewport } from './Viewport';
+import { jointsFromBoxes, requestBoxes } from './autorig/ai';
 import { zip } from './zip';
 
 type Step = 'import' | 'rig' | 'animate' | 'export';
@@ -408,7 +409,23 @@ export function App() {
                   const g = guessJoints(src, doc.template);
                   rerig({ joints: g.joints, groups: g.groups, keepMesh: true });
                 }}>Re-guess joints</button>
+                <button disabled={!!busy || doc.template !== 'humanoid'} title="Vision model finds head, torso and limbs" onClick={async () => {
+                  if (!src) return;
+                  setError(null);
+                  setBusy('Asking the vision model…');
+                  try {
+                    const boxes = await requestBoxes(src, doc.template);
+                    const hint = jointsFromBoxes(src, doc.template, boxes, doc.joints);
+                    if (!hint) throw new Error('The model did not recognise enough body parts');
+                    rerig({ joints: hint.joints, groups: { ...doc.groups, tail: hint.tail || !!doc.groups?.tail }, keepMesh: true });
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setBusy(null);
+                  }
+                }}>AI joints</button>
               </div>
+              {busy && <p className="busy">{busy}</p>}
               {TEMPLATES[doc.template].groups?.map((g) => (
                 <label key={g.id} className="check">
                   <input type="checkbox" checked={!!doc.groups?.[g.id]} onChange={(e) => rerig({ groups: { ...doc.groups, [g.id]: e.target.checked }, keepMesh: true })} /> {g.label}

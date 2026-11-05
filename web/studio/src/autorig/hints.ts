@@ -112,8 +112,13 @@ function sides(parts: SourcePart[], cx: number): [SourcePart[], SourcePart[]] {
  * Refines guessed humanoid joints with named layers. Returns the joints and
  * whether a tail layer was found, or null when no layer names are useful.
  */
-export function jointsFromLayers(template: TemplateId, parts: SourcePart[], guess: Record<string, Pt>): { joints: Record<string, Pt>; tail: boolean } | null {
-  if (template !== 'humanoid' || parts.length < 3) return null;
+export function jointsFromLayers(
+  template: TemplateId,
+  parts: SourcePart[],
+  guess: Record<string, Pt>,
+  minParts = 3,
+): { joints: Record<string, Pt>; tail: boolean } | null {
+  if (template !== 'humanoid' || parts.length < minParts) return null;
   const by: Record<Kind, SourcePart[]> = { head: [], torso: [], arm: [], leg: [], tail: [], hair: [], cloth: [] };
   for (const p of parts) {
     const k = classify(p.name);
