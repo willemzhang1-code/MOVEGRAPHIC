@@ -6,6 +6,7 @@ import { motionLibrary } from './motions';
 import { Timeline } from './Timeline';
 import { Viewport } from './Viewport';
 import { jointsFromBoxes, requestBoxes } from './autorig/ai';
+import { renderGif } from './gif';
 import { zip } from './zip';
 
 type Step = 'import' | 'rig' | 'animate' | 'export';
@@ -91,6 +92,8 @@ export function App() {
   const [showBones, setShowBones] = useState(true);
   const [selectedBone, setSelectedBone] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [gifAnim, setGifAnim] = useState('');
+  const [gifProgress, setGifProgress] = useState<string | null>(null);
   const undo = useRef<RigDoc[]>([]);
   const redo = useRef<RigDoc[]>([]);
   const dragBase = useRef<{ doc: RigDoc; value: number } | null>(null);
@@ -547,6 +550,27 @@ export function App() {
               <p className="hint">
                 Contains a Spine 4.2 JSON skeleton, atlas and texture (works with the RABBIT runtime and Spine 4.2 runtimes / editor import), plus a <code>.rabbit.json</code> project you can reopen here.
               </p>
+              <h3>Animated GIF</h3>
+              <div className="row">
+                <select value={gifAnim || doc.animations[0]?.name} onChange={(e) => setGifAnim(e.target.value)}>
+                  {doc.animations.map((a) => (
+                    <option key={a.name}>{a.name}</option>
+                  ))}
+                </select>
+                <button disabled={!rt || !src || !!gifProgress} onClick={async () => {
+                  if (!rt || !src) return;
+                  const name = gifAnim || doc.animations[0]?.name;
+                  setError(null);
+                  try {
+                    const blob = await renderGif(rt, doc, src.pages, name, { onProgress: (d, t) => setGifProgress(`${d}/${t}`) });
+                    download(blob, `${slug(doc.name)}-${name}.gif`);
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setGifProgress(null);
+                  }
+                }}>{gifProgress ? `Rendering ${gifProgress}` : 'Download GIF'}</button>
+              </div>
               <h3>Contents</h3>
               <p className="stat">
                 {doc.bones.length} bones · {doc.parts.length} weighted mesh{doc.parts.length > 1 ? 'es' : ''} ({vertexCount(doc)} vertices) · {doc.animations.length} animations
