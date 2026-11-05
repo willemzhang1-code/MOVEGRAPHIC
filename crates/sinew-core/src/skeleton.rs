@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::constraints;
-use crate::math::{atan2_deg, Affine, Color, Transform, Vec2};
+use crate::math::{atan2_deg, cos_deg, sin_deg, Affine, Color, Transform, Vec2};
 use crate::model::{AttachmentRef, ConstraintRef, Inherit, PhysicsParams, SkeletonData, TransformMix};
 
 #[derive(Clone, Debug)]
@@ -466,31 +466,46 @@ impl Skeleton {
     }
 
     /// Linear basis a bone's local matrix is multiplied by, given its
-    /// inherit mode: `world.linear = basis * local.linear`.
-    pub fn basis(&self, inherit: Inherit, parent: &Affine) -> Affine {
+    /// inherit mode: `world.linear = basis * local.linear`. `rotation` is the
+    /// bone's local rotation (degrees): for the no-scale modes the bone's X
+    /// axis follows where the parent maps that direction.
+    pub fn basis(&self, inherit: Inherit, parent: &Affine, rotation: f32) -> Affine {
         let (sx, sy) = (self.scale_x, self.scale_y);
         match inherit {
             Inherit::Normal => Affine::linear(parent.a, parent.b, parent.c, parent.d),
             Inherit::OnlyTranslation => Affine::scaling(sx, sy),
-            _ => {
-                // Parent without the skeleton's own scale / flip.
-                let isx = if sx != 0.0 { 1.0 / sx } else { 0.0 };
-                let isy = if sy != 0.0 { 1.0 / sy } else { 0.0 };
-                let p = Affine::linear(parent.a * isx, parent.b * isx, parent.c * isy, parent.d * isy);
+            Inherit::NoRotationOrReflection => {
+                let p = self.unscaled(parent);
                 let len = p.scale_x();
                 let theta = if len > 1e-6 { atan2_deg(p.c, p.a) } else { atan2_deg(p.d, p.b) - 90.0 };
-                let r = Affine::rotation(theta);
-                let local = match inherit {
-                    Inherit::NoRotationOrReflection => {
-                        let other = if len > 1e-6 { p.det().abs() / len } else { p.scale_y() };
-                        r.mul_linear(&Affine::scaling(len, other)).mul_linear(&Affine::rotation(-theta))
-                    }
-                    Inherit::NoScale if p.det() < 0.0 => r.mul_linear(&Affine::scaling(1.0, -1.0)),
-                    _ => r,
-                };
+                let other = if len > 1e-6 { p.det().abs() / len } else { p.scale_y() };
+                let local = Affine::rotation(theta).mul_linear(&Affine::scaling(len, other)).mul_linear(&Affine::rotation(-theta));
                 Affine::scaling(sx, sy).mul_linear(&local)
             }
+            Inherit::NoScale | Inherit::NoScaleOrReflection => {
+                let p = self.unscaled(parent);
+                let frame = self.no_scale_frame(inherit, parent, &p, rotation);
+                Affine::scaling(sx, sy).mul_linear(&frame).mul_linear(&Affine::rotation(-rotation))
+            }
         }
+    }
+
+    /// Parent linear part without the skeleton's own scale / flip.
+    fn unscaled(&self, parent: &Affine) -> Affine {
+        let isx = if self.scale_x != 0.0 { 1.0 / self.scale_x } else { 0.0 };
+        let isy = if self.scale_y != 0.0 { 1.0 / self.scale_y } else { 0.0 };
+        Affine::linear(parent.a * isx, parent.b * isx, parent.c * isy, parent.d * isy)
+    }
+
+    /// Orthonormal frame of a no-scale bone: X along the parent-mapped local
+    /// rotation, Y perpendicular (mirrored for noScale under a reflection).
+    fn no_scale_frame(&self, inherit: Inherit, parent: &Affine, p: &Affine, rotation: f32) -> Affine {
+        let v = p.apply_vec(Vec2::new(cos_deg(rotation), sin_deg(rotation)));
+        let len = v.len();
+        let x = if len > 1e-6 { v.scale(1.0 / len) } else { Vec2::new(cos_deg(rotation), sin_deg(rotation)) };
+        let flipped = (parent.det() < 0.0) != ((self.scale_x < 0.0) != (self.scale_y < 0.0));
+        let sign = if inherit == Inherit::NoScale && flipped { -1.0 } else { 1.0 };
+        Affine::linear(x.x, -x.y * sign, x.y, x.x * sign)
     }
 
     /// World transform of one bone from its parent's world and applied pose.
@@ -499,7 +514,7 @@ impl Skeleton {
         let bone = &self.bones[i];
         let l = bone.applied.matrix();
         let pos = parent.apply(Vec2::new(l.x, l.y));
-        let w = self.basis(bone.inherit, &parent).mul_linear(&l);
+        let w = self.basis(bone.inherit, &parent, bone.applied.rotation).mul_linear(&l);
         self.bones[i].world = Affine { a: w.a, b: w.b, c: w.c, d: w.d, x: pos.x, y: pos.y };
     }
 
@@ -508,7 +523,25 @@ impl Skeleton {
         let parent = self.parent_world(i);
         let w = self.bones[i].world;
         let lp = parent.inverse().apply(w.position());
-        let l = self.basis(self.bones[i].inherit, &parent).inverse().mul_linear(&w);
+        let inherit = self.bones[i].inherit;
+        let l = match inherit {
+            Inherit::NoScale | Inherit::NoScaleOrReflection => {
+                // Find the local rotation whose frame has the world X axis.
+                let p = self.unscaled(&parent);
+                let m = Affine::scaling(self.scale_x, self.scale_y).inverse().mul_linear(&w);
+                let col = Vec2::new(m.a, m.c);
+                let pi = p.inverse();
+                let rotation = if col.len() > 1e-6 && p.det().abs() > 1e-9 {
+                    pi.apply_vec(col).angle_deg()
+                } else {
+                    self.bones[i].applied.rotation
+                };
+                let frame = self.no_scale_frame(inherit, &parent, &p, rotation);
+                let local = frame.inverse().mul_linear(&m);
+                Affine::rotation(rotation).mul_linear(&local)
+            }
+            _ => self.basis(inherit, &parent, 0.0).inverse().mul_linear(&w),
+        };
         self.bones[i].applied = Transform::from_matrix(&Affine { x: lp.x, y: lp.y, ..l });
     }
 

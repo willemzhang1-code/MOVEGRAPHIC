@@ -23,7 +23,7 @@ pub fn apply_ik(sk: &mut Skeleton, i: usize) {
 /// Rotates a bone so its x axis points at `target` (world).
 pub fn ik_one(sk: &mut Skeleton, b: usize, target: Vec2, compress: bool, stretch: bool, uniform: bool, mix: f32) {
     let parent = sk.parent_world(b);
-    let inv = sk.basis(sk.bones[b].inherit, &parent).inverse();
+    let inv = sk.basis(sk.bones[b].inherit, &parent, sk.bones[b].applied.rotation).inverse();
     let pos = sk.bones[b].world.position();
     let local = inv.apply_vec(target.sub(pos));
     let length = sk.data.bones[b].length;
@@ -53,6 +53,67 @@ pub fn ik_one(sk: &mut Skeleton, b: usize, target: Vec2, compress: bool, stretch
 /// is where that ellipse meets the circle of radius |target| around the
 /// parent's origin.
 #[allow(clippy::too_many_arguments)]
+/// Two-bone chain geometry in the parent's unrotated frame (f64).
+struct Geo2 {
+    cx: f64,
+    cy: f64,
+    sx: f64,
+    sy: f64,
+    l2: f64,
+}
+
+impl Geo2 {
+    /// Child tip for child rotation `phi`, parent scale multiplied by (kx, ky).
+    fn tip(&self, phi: f64, kx: f64, ky: f64) -> (f64, f64) {
+        let (sx, sy) = (self.sx * kx, self.sy * ky);
+        (self.cx * sx + sx * self.l2 * phi.cos(), self.cy * sy + sy * self.l2 * phi.sin())
+    }
+
+    /// Child rotation of the straight (farthest-reaching) pose, and its reach.
+    fn straight(&self, kx: f64, ky: f64) -> (f64, f64) {
+        let (sx, sy) = (self.sx * kx, self.sy * ky);
+        let (cx, cy) = (self.cx * sx, self.cy * sy);
+        let (a, b) = (sx * self.l2, sy * self.l2);
+        let r = |phi: f64| {
+            let (x, y) = self.tip(phi, kx, ky);
+            x.hypot(y)
+        };
+        // Start from the best sample, then Newton on d|tip|²/dphi = 0.
+        let mut phi = (cy * b).atan2(cx * a);
+        let mut best = r(phi);
+        for i in 0..64 {
+            let p = std::f64::consts::TAU * i as f64 / 64.0;
+            if r(p) > best {
+                best = r(p);
+                phi = p;
+            }
+        }
+        for _ in 0..30 {
+            let (s, c) = phi.sin_cos();
+            let g = (b * b - a * a) * s * c - cx * a * s + cy * b * c;
+            let dg = (b * b - a * a) * (c * c - s * s) - cx * a * c - cy * b * s;
+            if dg.abs() < 1e-15 {
+                break;
+            }
+            let next = phi - g / dg;
+            if r(next) + 1e-12 < r(phi) {
+                break;
+            }
+            phi = next;
+        }
+        (phi, r(phi))
+    }
+
+    fn min_reach(&self) -> f64 {
+        (0..256)
+            .map(|i| {
+                let (x, y) = self.tip(std::f64::consts::TAU * i as f64 / 256.0, 1.0, 1.0);
+                x.hypot(y)
+            })
+            .fold(f64::MAX, f64::min)
+    }
+}
+
 pub fn ik_two(
     sk: &mut Skeleton,
     p: usize,
@@ -65,17 +126,20 @@ pub fn ik_two(
     mix: f32,
 ) {
     let parent = sk.parent_world(p);
-    let basis = sk.basis(sk.bones[p].inherit, &parent);
+    let basis = sk.basis(sk.bones[p].inherit, &parent, sk.bones[p].applied.rotation);
     let origin = sk.bones[p].world.position();
     let t = basis.inverse().apply_vec(target.sub(origin));
     let ap = sk.bones[p].applied;
-    let ac = sk.bones[c].applied;
     let (sx, sy) = (ap.scale_x, ap.scale_y);
+    // With a non-uniformly scaled parent, or stretch, the child's origin is
+    // placed on the parent's X axis (its local y is dropped), as the
+    // reference runtime does.
+    if stretch || (sx.abs() - sy.abs()).abs() > 1e-4 {
+        sk.bones[c].applied.y = 0.0;
+    }
+    let ac = sk.bones[c].applied;
     let l2 = sk.data.bones[c].length * ac.scale_x;
-    // Child origin and tip in the parent's (unrotated) scaled frame.
-    let center = Vec2::new(ac.x * sx, ac.y * sy);
-    let tip = |phi: f32| Vec2::new(center.x + sx * l2 * phi.cos(), center.y + sy * l2 * phi.sin());
-    if center.len() < 1e-4 || l2.abs() < 1e-4 {
+    if Vec2::new(ac.x * sx, ac.y * sy).len() < 1e-4 || l2.abs() < 1e-4 {
         ik_one(sk, p, target, false, stretch, uniform, mix);
         return;
     }
@@ -83,39 +147,62 @@ pub fn ik_two(
     if d < 1e-6 {
         return;
     }
-    // Reach range over the child's rotation.
-    const N: usize = 96;
-    let (mut min_r, mut max_r) = (f32::MAX, 0.0f32);
-    for k in 0..=N {
-        let r = tip(std::f32::consts::PI * 2.0 * k as f32 / N as f32).len();
-        min_r = min_r.min(r);
-        max_r = max_r.max(r);
-    }
-    let mut scale = 1.0;
-    if stretch && d > max_r && max_r > 1e-4 {
-        scale = d / max_r;
-        d = max_r;
-    } else if softness > 0.0 {
-        let start = max_r - softness;
+    // Child tip in the parent's (unrotated) frame for child rotation phi, with
+    // the parent's scale multiplied by (kx, ky) (stretch).
+    let geo = Geo2 { cx: ac.x as f64, cy: ac.y as f64, sx: sx as f64, sy: sy as f64, l2: l2 as f64 };
+    let (mut phi_max, mut max_r) = geo.straight(1.0, 1.0);
+    let min_r = geo.min_reach();
+    let mut k = (1.0f64, 1.0f64);
+    // Softness is authored in unscaled units: scale it like the chain.
+    let softness = softness * sx.abs() * (ac.scale_x.abs() + 1.0) * 0.5;
+    if softness > 0.0 {
+        // Bends ease in over `softness` before full reach (quadratic), reaching
+        // it at max + softness. Stretch never engages with softness.
+        let start = max_r as f32 - softness;
         if d > start {
-            d = start + softness * (1.0 - (-(d - start) / softness).exp());
+            let p = ((d - start) / (softness * 2.0)).min(1.0);
+            d = start + softness * (1.0 - (1.0 - p) * (1.0 - p));
         }
+    } else if stretch && d as f64 > max_r {
+        // Stretch the parent (X, or both axes when uniform) until the straight
+        // chain reaches the target exactly.
+        let (mut lo, mut hi) = (1.0f64, 2.0f64);
+        let ky = |s: f64| if uniform { s } else { 1.0 };
+        while geo.straight(hi, ky(hi)).1 < d as f64 && hi < 1e6 {
+            lo = hi;
+            hi *= 2.0;
+        }
+        for _ in 0..60 {
+            let m = 0.5 * (lo + hi);
+            if geo.straight(m, ky(m)).1 < d as f64 {
+                lo = m;
+            } else {
+                hi = m;
+            }
+        }
+        k = (hi, ky(hi));
+        (phi_max, max_r) = geo.straight(k.0, k.1);
     }
-    let d = d.clamp(min_r, max_r);
-    // Bend side: positive child rotation for bendPositive (mirrored by reflection).
+    let scale = k.0 as f32;
+    let d = (d as f64).clamp(min_r, max_r);
+    let tip = |phi: f64| geo.tip(phi, k.0, k.1);
+    // Bend side: positive child rotation for bendPositive (mirrored by
+    // reflection), measured from the straight pose.
     let mut bend = if bend_positive { 1.0 } else { -1.0 };
     if sx * sy < 0.0 {
         bend = -bend;
     }
-    let f = |phi: f32| tip(phi).len() - d;
-    let (lo, hi) = if bend > 0.0 { (0.0, std::f32::consts::PI) } else { (-std::f32::consts::PI, 0.0) };
+    let f = |phi: f64| tip(phi).0.hypot(tip(phi).1) - d;
+    let pi = std::f64::consts::PI;
+    let (lo, hi) = if bend > 0.0 { (phi_max, phi_max + pi) } else { (phi_max - pi, phi_max) };
     // Root of f on the bend side: scan, then bisect; fall back to the closest sample.
+    const N: usize = 96;
     let mut best = lo;
-    let mut best_err = f32::MAX;
+    let mut best_err = f(lo).abs();
     let mut root = None;
     let mut prev = (lo, f(lo));
-    for k in 1..=N {
-        let phi = lo + (hi - lo) * k as f32 / N as f32;
+    for i in 1..=N {
+        let phi = lo + (hi - lo) * i as f64 / N as f64;
         let v = f(phi);
         if v.abs() < best_err {
             best_err = v.abs();
@@ -124,7 +211,7 @@ pub fn ik_two(
         if root.is_none() && (prev.1 <= 0.0) != (v <= 0.0) {
             let (mut a, mut b) = (prev.0, phi);
             let fa = prev.1;
-            for _ in 0..30 {
+            for _ in 0..60 {
                 let m = 0.5 * (a + b);
                 if (f(m) <= 0.0) == (fa <= 0.0) {
                     a = m;
@@ -137,7 +224,9 @@ pub fn ik_two(
         prev = (phi, v);
     }
     let phi = root.unwrap_or(best);
-    let reach = tip(phi);
+    let (rx, ry) = tip(phi);
+    let reach = Vec2::new(rx as f32, ry as f32);
+    let phi = phi as f32;
     let theta = t.angle_deg() - reach.angle_deg();
     {
         let ap = &mut sk.bones[p].applied;
@@ -259,73 +348,123 @@ pub fn apply_transform(sk: &mut Skeleton, i: usize) {
 }
 
 /// Arc-length sampled path in world space.
+/// A path attachment's curves in world space, with arc-length lookup
+/// matching the reference runtime: each curve's length is its 4-chord
+/// approximation (or the attachment's stored lengths without constant
+/// speed); within a curve, constant speed maps distance to the curve
+/// parameter through a 10-chord table. Open paths continue straight past
+/// their ends along the end handles; closed paths wrap.
 struct PathSamples {
-    points: Vec<Vec2>,
-    /// Cumulative length at each point.
-    lengths: Vec<f32>,
+    /// Control points per curve (p0, p1, p2, p3).
+    curves: Vec<[Vec2; 4]>,
+    /// Cumulative length at the end of each curve.
+    ends: Vec<f32>,
+    constant: bool,
     closed: bool,
+}
+
+#[inline]
+fn bezier(c: &[Vec2; 4], t: f32) -> Vec2 {
+    let u = 1.0 - t;
+    let (a, b, cc, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+    Vec2::new(a * c[0].x + b * c[1].x + cc * c[2].x + d * c[3].x, a * c[0].y + b * c[1].y + cc * c[2].y + d * c[3].y)
+}
+
+#[inline]
+fn bezier_tangent(c: &[Vec2; 4], t: f32) -> Vec2 {
+    let u = 1.0 - t;
+    let (a, b, d) = (3.0 * u * u, 6.0 * u * t, 3.0 * t * t);
+    Vec2::new(
+        a * (c[1].x - c[0].x) + b * (c[2].x - c[1].x) + d * (c[3].x - c[2].x),
+        a * (c[1].y - c[0].y) + b * (c[2].y - c[1].y) + d * (c[3].y - c[2].y),
+    )
+}
+
+fn chord_length(c: &[Vec2; 4], n: usize) -> f32 {
+    let mut prev = c[0];
+    let mut total = 0.0;
+    for k in 1..=n {
+        let p = bezier(c, k as f32 / n as f32);
+        total += p.sub(prev).len();
+        prev = p;
+    }
+    total
 }
 
 impl PathSamples {
     fn total(&self) -> f32 {
-        *self.lengths.last().unwrap_or(&0.0)
+        *self.ends.last().unwrap_or(&0.0)
     }
 
-    /// Point and tangent angle (degrees) at arc length `d`. Open paths
-    /// continue straight past their ends; closed paths wrap.
+    /// Point and tangent angle (degrees) at distance `d` along the path.
     fn at(&self, mut d: f32) -> (Vec2, f32) {
-        let n = self.points.len();
         let total = self.total();
-        if n < 2 || total <= 1e-6 {
-            return (self.points.first().copied().unwrap_or(Vec2::ZERO), 0.0);
+        let (Some(first), Some(last)) = (self.curves.first(), self.curves.last()) else { return (Vec2::ZERO, 0.0) };
+        if total <= 1e-6 {
+            return (first[0], 0.0);
         }
         if self.closed {
             d = d.rem_euclid(total);
         } else if d < 0.0 {
-            let dir = self.points[1].sub(self.points[0]);
-            let a = dir.angle_deg();
-            return (self.points[0].add(Vec2::from_angle_deg(a, d)), a);
+            let a = first[1].sub(first[0]).angle_deg();
+            return (first[0].add(Vec2::from_angle_deg(a, d)), a);
         } else if d > total {
-            let dir = self.points[n - 1].sub(self.points[n - 2]);
-            let a = dir.angle_deg();
-            return (self.points[n - 1].add(Vec2::from_angle_deg(a, d - total)), a);
+            let a = last[3].sub(last[2]).angle_deg();
+            return (last[3].add(Vec2::from_angle_deg(a, d - total)), a);
         }
-        let i = self.lengths.partition_point(|&l| l < d).clamp(1, n - 1);
-        let (l0, l1) = (self.lengths[i - 1], self.lengths[i]);
-        let t = if l1 > l0 { (d - l0) / (l1 - l0) } else { 0.0 };
-        let a = self.points[i - 1];
-        let b = self.points[i];
-        (a.add(b.sub(a).scale(t)), b.sub(a).angle_deg())
+        let i = self.ends.partition_point(|&e| e <= d).min(self.curves.len() - 1);
+        let start = if i == 0 { 0.0 } else { self.ends[i - 1] };
+        let len = self.ends[i] - start;
+        let q = if len > 0.0 { (d - start) / len } else { 0.0 };
+        let c = &self.curves[i];
+        let t = if self.constant { Self::constant_t(c, q) } else { q };
+        (bezier(c, t), bezier_tangent(c, t).angle_deg())
+    }
+
+    /// Curve parameter at fraction `q` of the curve's 10-chord length.
+    fn constant_t(c: &[Vec2; 4], q: f32) -> f32 {
+        const N: usize = 10;
+        let mut pts = [Vec2::ZERO; N + 1];
+        let mut seg = [0.0f32; N];
+        pts[0] = c[0];
+        let mut total = 0.0;
+        for k in 1..=N {
+            pts[k] = bezier(c, k as f32 / N as f32);
+            seg[k - 1] = pts[k].sub(pts[k - 1]).len();
+            total += seg[k - 1];
+        }
+        let x = q * total;
+        let mut acc = 0.0;
+        for k in 0..N {
+            if x <= acc + seg[k] || k == N - 1 {
+                let f = if seg[k] > 0.0 { (x - acc) / seg[k] } else { 0.0 };
+                return (k as f32 + f) / N as f32;
+            }
+            acc += seg[k];
+        }
+        1.0
     }
 }
 
-fn sample_path(pts: &[Vec2], closed: bool) -> PathSamples {
+fn sample_path(pts: &[Vec2], closed: bool, constant: bool, lengths: &[f32]) -> PathSamples {
     let n = pts.len();
-    let curves = if closed { n / 3 } else { (n / 3).saturating_sub(1) };
-    let mut points = Vec::with_capacity(curves * 24 + 1);
-    let mut lengths = Vec::with_capacity(curves * 24 + 1);
-    let cubic = |p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32| {
-        let u = 1.0 - t;
-        let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
-        Vec2::new(a * p0.x + b * p1.x + c * p2.x + d * p3.x, a * p0.y + b * p1.y + c * p2.y + d * p3.y)
+    let count = if closed { n / 3 } else { (n / 3).saturating_sub(1) };
+    let curves: Vec<[Vec2; 4]> = (0..count)
+        .map(|c| [pts[(3 * c + 1) % n], pts[(3 * c + 2) % n], pts[(3 * c + 3) % n], pts[(3 * c + 4) % n]])
+        .collect();
+    let ends = if constant || lengths.len() < curves.len() {
+        let mut total = 0.0;
+        curves
+            .iter()
+            .map(|c| {
+                total += chord_length(c, 4);
+                total
+            })
+            .collect()
+    } else {
+        lengths[..curves.len()].to_vec()
     };
-    let mut total = 0.0;
-    for c in 0..curves {
-        let p0 = pts[(3 * c + 1) % n];
-        let p1 = pts[(3 * c + 2) % n];
-        let p2 = pts[(3 * c + 3) % n];
-        let p3 = pts[(3 * c + 4) % n];
-        let start = if c == 0 { 0 } else { 1 };
-        for k in start..=24 {
-            let p = cubic(p0, p1, p2, p3, k as f32 / 24.0);
-            if let Some(&last) = points.last() {
-                total += p.sub(last).len();
-            }
-            points.push(p);
-            lengths.push(total);
-        }
-    }
-    PathSamples { points, lengths, closed }
+    PathSamples { curves, ends, constant, closed }
 }
 
 /// Path constraint: bones follow a Bezier path attachment.
@@ -341,7 +480,7 @@ pub fn apply_path(sk: &mut Skeleton, i: usize) {
     let AttachmentKind::Path(path) = &data.attachment(r).kind else { return };
     let mut pts = Vec::new();
     crate::render::world_vertices(sk, d.target, &path.shape.vertices, path.shape.vertex_count, &mut pts);
-    let samples = sample_path(&pts, path.closed);
+    let samples = sample_path(&pts, path.closed, path.constant_speed, &path.lengths);
     let total = samples.total();
     if total <= 1e-6 {
         return;
@@ -368,20 +507,29 @@ pub fn apply_path(sk: &mut Skeleton, i: usize) {
         PositionMode::Percent => c.position * total,
         PositionMode::Fixed => c.position,
     };
+    // Chain mode without a rotation offset: each bone after the first starts
+    // at the previous bone's tip (blended toward the path by mixRotate).
+    let tip_mode = d.rotate_mode == RotateMode::Chain && d.offset_rotation == 0.0;
+    let mut tip: Option<Vec2> = None;
     for (k, &b) in d.bones.iter().enumerate() {
-        let (p, tangent) = samples.at(dist);
+        let (on_path, tangent) = samples.at(dist);
+        let p = if tip_mode { tip.unwrap_or(on_path) } else { on_path };
         let next_dist = dist + spaces[k];
+        let (next, _) = samples.at(next_dist);
+        let to_next = next.sub(p);
+        let raw = match d.rotate_mode {
+            RotateMode::Tangent => tangent,
+            _ if to_next.len() > 1e-4 => to_next.angle_deg(),
+            _ => tangent,
+        };
+        if tip_mode {
+            let ideal = p.add(Vec2::from_angle_deg(raw, bone_len(sk, b)));
+            tip = Some(next.add(ideal.sub(next).scale(c.mix_rotate)));
+        }
         let mut w = sk.bones[b].world;
         w.x += (p.x - w.x) * c.mix_x;
         w.y += (p.y - w.y) * c.mix_y;
         if c.mix_rotate > 0.0 {
-            let (next, _) = samples.at(next_dist);
-            let to_next = next.sub(p);
-            let angle = match d.rotate_mode {
-                RotateMode::Tangent => tangent,
-                _ if to_next.len() > 1e-4 => to_next.angle_deg(),
-                _ => tangent,
-            } + d.offset_rotation;
             if d.rotate_mode == RotateMode::ChainScale {
                 let len = bone_len(sk, b);
                 if len > 1e-4 {
@@ -390,7 +538,7 @@ pub fn apply_path(sk: &mut Skeleton, i: usize) {
                     w.c *= s;
                 }
             }
-            let delta = wrap_deg(angle - w.rotation_deg()) * c.mix_rotate;
+            let delta = wrap_deg(raw + d.offset_rotation - w.rotation_deg()) * c.mix_rotate;
             let rotated = Affine::rotation(delta).mul_linear(&w);
             w = Affine { x: w.x, y: w.y, ..rotated };
         }
