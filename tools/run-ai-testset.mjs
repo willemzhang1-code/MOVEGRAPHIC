@@ -45,11 +45,12 @@ for (const f of files) {
     await page.waitForTimeout(500);
     row.panels.push(['auto joints', await shot()]);
     if (AI && template === 'humanoid') {
+      const tAi = Date.now();
       await page.getByRole('button', { name: 'AI joints' }).click();
       await page.waitForFunction(() => !document.querySelector('.panel .busy'), null, { timeout: 90000 }).catch(() => {});
       await page.waitForTimeout(500);
       const err = await page.locator('.error').textContent().catch(() => null);
-      row.panels.push([err ? `AI joints: ${err.slice(0, 60)}` : 'AI joints', await shot()]);
+      row.panels.push([err ? `AI joints: ${err.slice(0, 60)}` : `AI joints (${((Date.now() - tAi) / 1000).toFixed(1)} s)`, await shot()]);
     }
     row.stats = (await page.locator('.panel .stat').first().textContent()) ?? '';
     const view = await page.locator('.panel .row.seg button.on', { hasText: 'view' }).textContent().catch(() => null);
