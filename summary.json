@@ -1,0 +1,142 @@
+[
+ {
+  "id": "01",
+  "template": "humanoid",
+  "ms": 1984,
+  "stats": "Front / ¾ view · 281 vertices · 430 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "02",
+  "template": "humanoid",
+  "ms": 2110,
+  "stats": "Side view · 350 vertices · 590 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "03",
+  "template": "humanoid",
+  "ms": 2171,
+  "stats": "Side view · 330 vertices · 560 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "04",
+  "template": "humanoid",
+  "ms": 2220,
+  "stats": "Front / ¾ view · 275 vertices · 442 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "05",
+  "template": "humanoid",
+  "ms": 2178,
+  "stats": "Side view · 303 vertices · 516 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "06",
+  "template": "humanoid",
+  "ms": 2190,
+  "stats": "Side view · 299 vertices · 401 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "07",
+  "template": "humanoid",
+  "ms": 2604,
+  "stats": "Front / ¾ view · 365 vertices · 626 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "08",
+  "template": "humanoid",
+  "ms": 2836,
+  "stats": "Side view · 264 vertices · 418 triangles · 18 bones",
+  "error": null
+ },
+ {
+  "id": "09",
+  "template": "humanoid",
+  "ms": 2151,
+  "stats": "Side view · 2 layers · 451 vertices · 704 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "10",
+  "template": "humanoid",
+  "ms": 2372,
+  "stats": "Front / ¾ view · 337 vertices · 542 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "11",
+  "template": "humanoid",
+  "ms": 2193,
+  "stats": "Front / ¾ view · 243 vertices · 378 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "12",
+  "template": "quadruped",
+  "ms": 3757,
+  "stats": "851 vertices · 1464 triangles · 14 bones",
+  "error": null
+ },
+ {
+  "id": "13",
+  "template": "blob",
+  "ms": 3924,
+  "stats": "612 vertices · 1108 triangles · 3 bones",
+  "error": null
+ },
+ {
+  "id": "14",
+  "template": "humanoid",
+  "ms": 2176,
+  "stats": "Front / ¾ view · 249 vertices · 395 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "15",
+  "template": "quadruped",
+  "ms": 4387,
+  "stats": "777 vertices · 1349 triangles · 14 bones",
+  "error": null
+ },
+ {
+  "id": "16",
+  "template": "humanoid",
+  "ms": 2296,
+  "stats": "Side view · 266 vertices · 442 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "17",
+  "template": "humanoid",
+  "ms": 2192,
+  "stats": "Side view · 319 vertices · 508 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "18",
+  "template": "humanoid",
+  "ms": 2231,
+  "stats": "Front / ¾ view · 250 vertices · 386 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "19",
+  "template": "humanoid",
+  "ms": 2161,
+  "stats": "Side view · 2 layers · 315 vertices · 464 triangles · 16 bones",
+  "error": null
+ },
+ {
+  "id": "20",
+  "template": "humanoid",
+  "ms": 2466,
+  "stats": "Front / ¾ view · 430 vertices · 731 triangles · 18 bones",
+  "error": null
+ }
+]
