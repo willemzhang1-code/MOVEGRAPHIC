@@ -7,3 +7,10 @@ web/public/examples/
 .deploy/
 godot/example/bin/
 godot/example/.godot/
+# Unity native plugins are build outputs (tools/build-unity-plugins.sh, CI); their .meta files are committed.
+unity/com.rabbit.runtime/Plugins/**/*.so
+unity/com.rabbit.runtime/Plugins/**/*.dll
+unity/com.rabbit.runtime/Plugins/**/*.dylib
+unity/com.rabbit.runtime/Plugins/**/*.a
+unity/tests/**/bin/
+unity/tests/**/obj/

@@ -1,0 +1,91 @@
+# Builds the native core for every Unity platform and assembles the
+# com.rabbit.runtime UPM tarball (artifact; attached to releases on v* tags).
+name: unity-package
+
+on:
+  push:
+    branches: [main]
+    paths: ['crates/**', 'unity/**', 'tools/unity-metas.py', '.github/workflows/unity.yml']
+  pull_request:
+    paths: ['crates/**', 'unity/**']
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  linux-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - run: cargo build --release -p sinew-ffi
+      - name: C# core tests
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: |
+          dotnet build -c Release -o out unity/tests/CoreTests
+          cp target/release/libsinew_ffi.so out/
+          (cd out && dotnet CoreTests.dll "$GITHUB_WORKSPACE")
+      - run: dotnet build -c Release unity/tests/UnityCompile/player && dotnet build -c Release unity/tests/UnityCompile/editor
+      - run: cargo install cargo-ndk --locked
+      - run: cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o android build --release -p sinew-ffi
+      - run: |
+          mkdir -p plugins/Linux/x86_64 plugins/Android
+          cp target/release/libsinew_ffi.so plugins/Linux/x86_64/
+          cp -r android/* plugins/Android/
+      - uses: actions/upload-artifact@v4
+        with: { name: plugins-linux-android, path: plugins }
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p sinew-ffi
+      - shell: bash
+        run: mkdir -p plugins/Windows/x86_64 && cp target/release/sinew_ffi.dll plugins/Windows/x86_64/
+      - uses: actions/upload-artifact@v4
+        with: { name: plugins-windows, path: plugins }
+
+  apple:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin,aarch64-apple-ios
+      - run: |
+          cargo build --release -p sinew-ffi --target x86_64-apple-darwin
+          cargo build --release -p sinew-ffi --target aarch64-apple-darwin
+          cargo build --release -p sinew-ffi --target aarch64-apple-ios
+          mkdir -p plugins/macOS plugins/iOS
+          lipo -create target/x86_64-apple-darwin/release/libsinew_ffi.dylib target/aarch64-apple-darwin/release/libsinew_ffi.dylib -output plugins/macOS/libsinew_ffi.dylib
+          cp target/aarch64-apple-ios/release/libsinew_ffi.a plugins/iOS/
+      - uses: actions/upload-artifact@v4
+        with: { name: plugins-apple, path: plugins }
+
+  package:
+    needs: [linux-android, windows, apple]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: plugins-*, path: dl }
+      - run: |
+          for d in dl/*; do cp -r "$d"/. unity/com.rabbit.runtime/Plugins/; done
+          python3 tools/unity-metas.py
+          version=$(python3 -c "import json;print(json.load(open('unity/com.rabbit.runtime/package.json'))['version'])")
+          mkdir -p pack/package && cp -r unity/com.rabbit.runtime/. pack/package/
+          tar -C pack -czf "com.rabbit.runtime-$version.tgz" package
+          echo "TGZ=com.rabbit.runtime-$version.tgz" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with: { name: com.rabbit.runtime, path: '${{ env.TGZ }}' }
+      - if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "$TGZ" --clobber

@@ -15,6 +15,7 @@
 | `crates/sinew-core` | Rust 内核：数据模型、骨骼求值、IK/Transform 约束、通用属性通道动画、多轨道混合、渲染批次、Spine 4.x JSON 导入、atlas 解析 |
 | `crates/sinew-ffi` | C ABI；同一套导出用于 WASM 与原生引擎 |
 | `crates/sinew-godot` + `godot/` | Godot 4.4+ 运行时（GDExtension）与示例工程，见 [godot/README.md](godot/README.md) |
+| `unity/com.rabbit.runtime` | Unity 2021.3+ 运行时（UPM 包，C# P/Invoke + 原生核心），见 [unity/com.rabbit.runtime/README.md](unity/com.rabbit.runtime/README.md)；全平台原生库由 CI（`.github/workflows/unity.yml`）构建打包 |
 | `web/runtime` | TS 运行时：WASM 封装（零拷贝读取缓冲）、WebGL2 渲染器（PMA、双色 tint、混合模式） |
 | `web/studio` | RABBIT Studio：单图 → 自动抠图/网格/骨架/权重 → 动作库 → 时间轴编辑 → 导出 Spine 4.2 |
 | `web/demo` | 演示播放器（含 Spine 官方示例浏览，示例需本地下载） |

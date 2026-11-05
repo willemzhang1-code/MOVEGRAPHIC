@@ -1,0 +1,23 @@
+{
+  "name": "com.rabbit.runtime",
+  "version": "0.1.0",
+  "displayName": "RABBIT Runtime",
+  "description": "Plays RABBIT / Spine 4.2 JSON skeletons (meshes, IK, path, physics constraints, clipping, two-color tint) with the native RABBIT core.",
+  "unity": "2021.3",
+  "keywords": [
+    "2d",
+    "skeletal",
+    "animation",
+    "spine"
+  ],
+  "author": {
+    "name": "RABBIT"
+  },
+  "samples": [
+    {
+      "displayName": "Basic",
+      "description": "Click to cycle animations; logs events.",
+      "path": "Samples~/Basic"
+    }
+  ]
+}

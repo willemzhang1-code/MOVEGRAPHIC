@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Compile check with UNITY_EDITOR: runtime + editor scripts against UnityEngine 2021.3 reference assemblies and EditorStubs.cs. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);UNITY_EDITOR;UNITY_2020_2_OR_NEWER</DefineConstants>
+    <AssemblyName>Rabbit.EditorCheck</AssemblyName>
+    <NoWarn>$(NoWarn);NU1701</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../com.rabbit.runtime/Runtime/**/*.cs" />
+    <Compile Include="../../../com.rabbit.runtime/Editor/**/*.cs" />
+    <PackageReference Include="UnityEngine.Modules" Version="2021.3.33" PrivateAssets="all" />
+    <Compile Include="EditorStubs.cs" />
+  </ItemGroup>
+</Project>

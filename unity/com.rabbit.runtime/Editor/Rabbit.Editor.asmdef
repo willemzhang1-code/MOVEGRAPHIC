@@ -1,0 +1,11 @@
+{
+    "name": "Rabbit.Editor",
+    "rootNamespace": "Rabbit.Editor",
+    "references": ["Rabbit.Runtime"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "autoReferenced": true,
+    "noEngineReferences": false
+}
