@@ -138,6 +138,8 @@ export function App() {
   };
 
   docRef.current = doc;
+  // Automation hook (AI test set runner, debugging).
+  (window as unknown as { __rabbit?: unknown }).__rabbit = { doc, src };
   const current = useMemo(() => doc?.animations.find((a) => a.name === anim) ?? doc?.animations[0] ?? null, [doc, anim]);
 
   // ------------------------------------------------------------------ import

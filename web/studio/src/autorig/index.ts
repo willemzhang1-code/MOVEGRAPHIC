@@ -2,6 +2,7 @@ import { motionLibrary } from '../motions';
 import type { AnimDoc, Part, RigDoc } from '../doc';
 import { buildMesh, type Mesh } from './mesh';
 import { dangles, jointsFromLayers } from './hints';
+import { eraseLines, findLines, findProps, isLongProp, splitProps, type Line } from './props';
 import { assignBones, computeWeights, resolveBones, toWorld, type BoneGeom, type CustomBone } from './rig';
 export type { CustomBone } from './rig';
 import type { Source } from './source';
@@ -53,8 +54,20 @@ function offsetMesh(m: Mesh, dx: number, dy: number, w: number, h: number): Mesh
 }
 
 /** Joint guess: silhouette heuristics, refined by named layers when available. */
+/** Prop candidates of a single-image humanoid (cached per source). */
+const linesCache = new WeakMap<Source, Line[]>();
+function propLines(src: Source, template: TemplateId): Line[] {
+  if (src.parts.length !== 1 || template !== 'humanoid') return [];
+  let l = linesCache.get(src);
+  if (!l) linesCache.set(src, (l = findLines(src.mask, src.width, src.height)));
+  return l;
+}
+
 export function guessJoints(src: Source, template: TemplateId): { joints: Record<string, Pt>; groups: Record<string, boolean>; view: View } {
-  const g = TEMPLATES[template].guess(src.mask, src.width, src.height);
+  // Long props (spears, staves) would read as limbs or the head top: guess without them.
+  const long = propLines(src, template).filter(isLongProp);
+  const mask = long.length ? eraseLines(src.mask, src.width, src.height, long) : src.mask;
+  const g = TEMPLATES[template].guess(mask, src.width, src.height);
   const view = g.view ?? 'side';
   const hint = src.parts.length > 1 ? jointsFromLayers(template, src.parts, g.joints) : null;
   return hint ? { joints: hint.joints, groups: { ...g.groups, tail: hint.tail }, view } : { ...g, view };
@@ -80,19 +93,26 @@ function addDangles(bones: BoneGeom[], src: Source, joints: Record<string, Pt>) 
 }
 
 /** Full auto-rig: joints (guessed unless given), meshes, bones, weights, motions. */
-export function buildDoc(src: Source, o: RigOptions): RigDoc {
+export function buildDoc(source: Source, o: RigOptions): RigDoc {
   const t = TEMPLATES[o.template];
-  const guess = o.joints && o.groups ? null : guessJoints(src, o.template);
+  const guess = o.joints && o.groups ? null : guessJoints(source, o.template);
   const joints = o.joints ?? guess!.joints;
   const groups = o.groups ?? guess?.groups ?? {};
   const view = o.view ?? guess?.view ?? 'side';
   const spacing = Math.max(5, characterHeight(joints) / (o.density ?? DEFAULT_DENSITY));
   const bones = resolveBones(t, joints, groups, o.customBones ?? []);
-  if (src.parts.length > 1 && o.template === 'humanoid') addDangles(bones, src, joints);
-  const allowed = src.parts.length > 1 ? assignBones(src.parts, bones, joints.ground) : [null];
+  // Single image: held props (spear, staff, sword) become their own part, bound to the hand.
+  const props = findProps(propLines(source, o.template), joints, bones);
+  const src = splitProps(source, props, characterHeight(joints));
+  if (src.parts.length > 1 && source.parts.length > 1 && o.template === 'humanoid') addDangles(bones, src, joints);
+  const allowed =
+    source.parts.length > 1
+      ? assignBones(src.parts, bones, joints.ground)
+      : src.parts.map((p, i) => (i === 0 ? null : new Set([props[i - 1]?.bone ?? 0])));
+  const reuse = o.meshes && o.meshes.length === src.parts.length ? o.meshes : undefined;
   const parts: Part[] = src.parts.map((sp, i) => {
     const local = Math.min(spacing, Math.max(4, Math.min(sp.width, sp.height) / 3));
-    const mesh = o.meshes?.[i] ?? offsetMesh(buildMesh(sp.mask, sp.width, sp.height, local), sp.x, sp.y, sp.width, sp.height);
+    const mesh = reuse?.[i] ?? offsetMesh(buildMesh(sp.mask, sp.width, sp.height, local), sp.x, sp.y, sp.width, sp.height);
     const weights = computeWeights(mesh, sp, bones, joints.ground, allowed[i] ?? null);
     return { name: sp.name, x: sp.x, y: sp.y, width: sp.width, height: sp.height, mesh, weights, page: sp.page, region: sp.region };
   });
