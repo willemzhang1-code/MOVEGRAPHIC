@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { SinewRenderer, ortho, type SinewRuntime, type SinewTexture, type SkeletonData, type SkeletonInstance } from '@sinew/runtime';
 import { compile, type RigDoc } from './doc';
-import { TEMPLATES, type Pt } from './autorig';
+import { TEMPLATES, type CustomBone, type Pt } from './autorig';
 import { toWorld } from './autorig/rig';
 
 export type ViewMode = 'rig' | 'animate';
+export type RigTool = 'joints' | 'bone' | 'weights';
 
 interface Props {
   rt: SinewRuntime;
@@ -24,6 +25,14 @@ interface Props {
   onJoints(joints: Record<string, Pt>, commit: boolean): void;
   /** Animate mode: rotate a bone by `delta` degrees from the drag start. */
   onRotate(bone: string, delta: number, commit: boolean): void;
+  tool?: RigTool;
+  /** Bone index shown / painted by the weights tool. */
+  weightBone?: number | null;
+  /** Brush radius in image pixels. */
+  brushRadius?: number;
+  onAddBone?(from: Pt, to: Pt): void;
+  onCustomBone?(index: number, bone: CustomBone, commit: boolean): void;
+  onPaint?(center: Pt, commit: boolean): void;
 }
 
 interface Camera {
@@ -48,8 +57,15 @@ export function Viewport(p: Props) {
     anim: null as string | null,
     camera: { x: 0, y: 0, zoom: 1 } as Camera,
     joints: null as Record<string, Pt> | null,
-    drag: null as null | { kind: 'joint'; name: string } | { kind: 'bone'; bone: string; start: number },
+    drag: null as
+      | null
+      | { kind: 'joint'; name: string }
+      | { kind: 'bone'; bone: string; start: number }
+      | { kind: 'custom'; index: number; end: 'from' | 'to'; bone: CustomBone }
+      | { kind: 'new'; from: Pt; to: Pt }
+      | { kind: 'paint' },
     hoverJoint: null as string | null,
+    cursor: null as Pt | null,
     lastTimeReport: 0,
   });
 
@@ -246,9 +262,87 @@ export function Viewport(p: Props) {
     g.stroke();
   }
 
+  const imgToScreen = (p: Pt): [number, number] => {
+    const g0 = props.current.doc.joints.ground;
+    return toScreen(p.x - g0.x, g0.y - p.y);
+  };
+  const screenToImg = (sx: number, sy: number): Pt => {
+    const w = toWorldPt(sx, sy);
+    const g0 = props.current.doc.joints.ground;
+    return { x: w.x + g0.x, y: g0.y - w.y };
+  };
+
+  function drawWeights(g: CanvasRenderingContext2D, accent: string) {
+    const { doc, weightBone } = props.current;
+    if (weightBone == null) return;
+    for (const part of doc.parts) {
+      const pts = part.mesh.points;
+      for (let v = 0; v < pts.length / 2; v++) {
+        const w = part.weights[v]?.find(([b]) => b === weightBone)?.[1] ?? 0;
+        const [x, y] = imgToScreen({ x: pts[v * 2], y: pts[v * 2 + 1] });
+        g.beginPath();
+        g.arc(x, y, w > 0.02 ? 3.5 : 2, 0, Math.PI * 2);
+        g.fillStyle = w > 0.02 ? `hsl(${(1 - w) * 220}, 95%, 50%)` : 'rgba(120,120,140,0.35)';
+        g.fill();
+      }
+    }
+    const c = state.current.cursor;
+    if (c) {
+      const [x, y] = imgToScreen(c);
+      const r = (props.current.brushRadius ?? 30) * state.current.camera.zoom;
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.strokeStyle = accent;
+      g.lineWidth = 1.5;
+      g.stroke();
+    }
+  }
+
+  function drawCustom(g: CanvasRenderingContext2D) {
+    const s = state.current;
+    const { doc } = props.current;
+    const purple = '#9b6bff';
+    (doc.customBones ?? []).forEach((b, i) => {
+      const cb = s.drag?.kind === 'custom' && s.drag.index === i ? s.drag.bone : b;
+      drawBoneShape(g, imgToScreen(cb.from), imgToScreen(cb.to), purple, 5);
+      for (const p of [cb.from, cb.to]) {
+        const [x, y] = imgToScreen(p);
+        g.beginPath();
+        g.arc(x, y, 4.5, 0, Math.PI * 2);
+        g.fillStyle = purple;
+        g.fill();
+        g.strokeStyle = '#fff';
+        g.lineWidth = 2;
+        g.stroke();
+      }
+    });
+    if (s.drag?.kind === 'new') drawBoneShape(g, imgToScreen(s.drag.from), imgToScreen(s.drag.to), purple, 5);
+  }
+
+  function nearestCustom(sx: number, sy: number): { index: number; end: 'from' | 'to' } | null {
+    let best: { index: number; end: 'from' | 'to' } | null = null;
+    let bd = 10;
+    (props.current.doc.customBones ?? []).forEach((b, index) => {
+      for (const end of ['to', 'from'] as const) {
+        const [x, y] = imgToScreen(b[end]);
+        const d = Math.hypot(x - sx, y - sy);
+        if (d < bd) {
+          bd = d;
+          best = { index, end };
+        }
+      }
+    });
+    return best;
+  }
+
   function drawRig(g: CanvasRenderingContext2D, accent: string, boneColor: string) {
     const s = state.current;
     const { doc } = props.current;
+    if (props.current.tool === 'weights') {
+      drawWeights(g, accent);
+      return;
+    }
+    drawCustom(g);
     const joints = s.joints ?? doc.joints;
     const t = TEMPLATES[doc.template];
     const ground = joints.ground;
@@ -369,6 +463,26 @@ export function Viewport(p: Props) {
     const s = state.current;
     const pr = props.current;
     if (pr.mode === 'rig') {
+      const tool = pr.tool ?? 'joints';
+      if (tool === 'weights') {
+        s.drag = { kind: 'paint' };
+        s.cursor = screenToImg(sx, sy);
+        pr.onPaint?.(s.cursor, false);
+        (e.target as Element).setPointerCapture(e.pointerId);
+        return;
+      }
+      const c = nearestCustom(sx, sy);
+      if (c) {
+        s.drag = { kind: 'custom', index: c.index, end: c.end, bone: { ...pr.doc.customBones![c.index] } };
+        (e.target as Element).setPointerCapture(e.pointerId);
+        return;
+      }
+      if (tool === 'bone') {
+        const p = screenToImg(sx, sy);
+        s.drag = { kind: 'new', from: p, to: p };
+        (e.target as Element).setPointerCapture(e.pointerId);
+        return;
+      }
       const j = nearestJoint(sx, sy);
       if (j) {
         s.drag = { kind: 'joint', name: j };
@@ -389,9 +503,32 @@ export function Viewport(p: Props) {
     const [sx, sy] = local(e);
     const s = state.current;
     const pr = props.current;
+    if (pr.mode === 'rig' && pr.tool === 'weights') s.cursor = screenToImg(sx, sy);
     if (!s.drag) {
       if (pr.mode === 'rig') s.hoverJoint = nearestJoint(sx, sy);
-      overlayRef.current!.style.cursor = pr.mode === 'rig' ? (s.hoverJoint ? 'grab' : 'default') : nearestBone(sx, sy) ? 'pointer' : 'default';
+      const tool = pr.tool ?? 'joints';
+      overlayRef.current!.style.cursor =
+        pr.mode === 'rig'
+          ? tool === 'weights' || tool === 'bone'
+            ? 'crosshair'
+            : s.hoverJoint || nearestCustom(sx, sy)
+              ? 'grab'
+              : 'default'
+          : nearestBone(sx, sy)
+            ? 'pointer'
+            : 'default';
+      return;
+    }
+    if (s.drag.kind === 'paint') {
+      pr.onPaint?.(s.cursor!, false);
+      return;
+    }
+    if (s.drag.kind === 'new') {
+      s.drag.to = screenToImg(sx, sy);
+      return;
+    }
+    if (s.drag.kind === 'custom') {
+      s.drag.bone = { ...s.drag.bone, [s.drag.end]: screenToImg(sx, sy) };
       return;
     }
     if (s.drag.kind === 'joint') {
@@ -412,7 +549,14 @@ export function Viewport(p: Props) {
     const s = state.current;
     const pr = props.current;
     if (!s.drag) return;
-    if (s.drag.kind === 'joint') pr.onJoints(s.joints!, true);
+    if (s.drag.kind === 'paint') pr.onPaint?.(s.cursor!, true);
+    else if (s.drag.kind === 'new') {
+      const { from, to } = s.drag;
+      const [ax, ay] = imgToScreen(from);
+      const [bx, by] = imgToScreen(to);
+      if (Math.hypot(bx - ax, by - ay) > 8) pr.onAddBone?.(from, to);
+    } else if (s.drag.kind === 'custom') pr.onCustomBone?.(s.drag.index, s.drag.bone, true);
+    else if (s.drag.kind === 'joint') pr.onJoints(s.joints!, true);
     else {
       const [sx, sy] = local(e);
       let d = angleAt(s.drag.bone, sx, sy) - s.drag.start;
@@ -425,7 +569,16 @@ export function Viewport(p: Props) {
   return (
     <div className="viewport">
       <canvas ref={glRef} className="layer" />
-      <canvas ref={overlayRef} className="layer" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} />
+      <canvas
+        ref={overlayRef}
+        className="layer"
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerLeave={() => {
+          state.current.cursor = null;
+        }}
+      />
     </div>
   );
 }

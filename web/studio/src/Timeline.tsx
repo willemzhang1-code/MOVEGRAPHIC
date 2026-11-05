@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { AnimDoc } from './doc';
+import type { AnimDoc, Ease } from './doc';
 
 interface Props {
   anim: AnimDoc;
@@ -12,6 +12,7 @@ interface Props {
   onDeleteKey(channel: number, key: number): void;
   onDuration(d: number): void;
   onLoop(loop: boolean): void;
+  onEase(channel: number, key: number, ease: Ease): void;
 }
 
 const PROP_LABEL: Record<string, string> = { rotate: 'rot', translate: 'move', scale: 'scale', color: 'color' };
@@ -60,6 +61,20 @@ export function Timeline(p: Props) {
         <label className="tl-field">
           <input type="checkbox" checked={p.anim.loop} onChange={(e) => p.onLoop(e.target.checked)} /> loop
         </label>
+        {selKey && p.anim.channels[selKey[0]]?.keys[selKey[1]] && (
+          <span className="tl-field">
+            ease
+            {(['linear', 'smooth', 'stepped'] as Ease[]).map((e) => (
+              <button
+                key={e}
+                className={(p.anim.channels[selKey[0]].keys[selKey[1]].ease ?? 'linear') === e ? 'on' : ''}
+                onClick={() => p.onEase(selKey[0], selKey[1], e)}
+              >
+                {e}
+              </button>
+            ))}
+          </span>
+        )}
         <span className="tl-hint">Drag a bone in the view to set a key · select a key and press Delete</span>
       </div>
       <div className="tl-grid">

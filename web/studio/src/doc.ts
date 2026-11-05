@@ -1,7 +1,7 @@
 // Studio document model and compilation to Spine 4.2 JSON + atlas.
 
 import type { Mesh } from './autorig/mesh';
-import type { BoneGeom, Weights } from './autorig/rig';
+import type { BoneGeom, CustomBone, Weights } from './autorig/rig';
 export type { Weights };
 import type { Pt, TemplateId } from './autorig/templates';
 
@@ -53,6 +53,8 @@ export interface RigDoc {
   joints: Record<string, Pt>;
   /** Enabled optional bone groups (e.g. tail). */
   groups: Record<string, boolean>;
+  /** Bones added by hand. */
+  customBones?: CustomBone[];
   /** Back to front. */
   parts: Part[];
   pages: { width: number; height: number }[];

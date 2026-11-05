@@ -4,7 +4,8 @@ import { buildDoc, cutout, DEFAULT_DENSITY, guessJoints, sourceFromCutout, sourc
 import { compile, pageFile, sampleChannel, triangleCount, vertexCount, type AnimDoc, type Channel, type RigDoc } from './doc';
 import { motionLibrary } from './motions';
 import { Timeline } from './Timeline';
-import { Viewport } from './Viewport';
+import { Viewport, type RigTool } from './Viewport';
+import type { CustomBone } from './autorig';
 import { jointsFromBoxes, requestBoxes } from './autorig/ai';
 import { renderGif } from './gif';
 import { zip } from './zip';
@@ -92,6 +93,15 @@ export function App() {
   const [showBones, setShowBones] = useState(true);
   const [selectedBone, setSelectedBone] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [tool, setTool] = useState<RigTool>('joints');
+  const [weightBone, setWeightBone] = useState<number | null>(null);
+  const [brushRadius, setBrushRadius] = useState(30);
+  const [brushStrength, setBrushStrength] = useState(0.3);
+  const [brushSubtract, setBrushSubtract] = useState(false);
+  const paintBase = useRef<RigDoc | null>(null);
+  /** Layer the current brush stroke paints on (topmost under the stroke start). */
+  const paintPart = useRef(-1);
+  const docRef = useRef<RigDoc | null>(null);
   const [gifAnim, setGifAnim] = useState('');
   const [gifProgress, setGifProgress] = useState<string | null>(null);
   const undo = useRef<RigDoc[]>([]);
@@ -127,6 +137,7 @@ export function App() {
     }
   };
 
+  docRef.current = doc;
   const current = useMemo(() => doc?.animations.find((a) => a.name === anim) ?? doc?.animations[0] ?? null, [doc, anim]);
 
   // ------------------------------------------------------------------ import
@@ -196,7 +207,7 @@ export function App() {
   }
 
   // ------------------------------------------------------------------ rig edits
-  function rerig(o: { template?: TemplateId; joints?: Record<string, Pt>; groups?: Record<string, boolean>; density?: number; keepMesh?: boolean }) {
+  function rerig(o: { template?: TemplateId; joints?: Record<string, Pt>; groups?: Record<string, boolean>; density?: number; keepMesh?: boolean; customBones?: CustomBone[] }) {
     if (!doc || !src) return;
     const template = o.template ?? doc.template;
     const sameTemplate = template === doc.template;
@@ -206,6 +217,7 @@ export function App() {
       joints: o.joints ?? (sameTemplate ? doc.joints : undefined),
       groups: o.groups ?? (sameTemplate && !o.joints ? doc.groups : o.joints && sameTemplate ? doc.groups : undefined),
       meshes: o.keepMesh ? doc.parts.map((p) => p.mesh) : undefined,
+      customBones: o.customBones ?? (sameTemplate ? doc.customBones : []),
       animations: sameTemplate ? doc.animations : motionLibrary(template),
     });
     commit(next);
@@ -252,6 +264,95 @@ export function App() {
     keys.sort((p, q) => p.t - q.t);
     channels[ci] = { ...channels[ci], keys: keys.map((k, i) => ({ ...k, ease: i === keys.length - 1 ? undefined : k.ease ?? 'smooth' })) };
     return { ...a, channels };
+  }
+
+  // ------------------------------------------------------------------ manual rig edits
+  function addBone(from: Pt, to: Pt) {
+    if (!doc) return;
+    const g = doc.joints.ground;
+    let parent = doc.bones[0]?.name ?? 'root';
+    let best = Infinity;
+    for (const b of doc.bones) {
+      const r = (b.rotation * Math.PI) / 180;
+      const ax = b.x + g.x;
+      const ay = g.y - b.y;
+      const bx = ax + Math.cos(r) * Math.max(b.length, 1);
+      const by = ay - Math.sin(r) * Math.max(b.length, 1);
+      const dx = bx - ax;
+      const dy = by - ay;
+      const t = Math.max(0, Math.min(1, ((from.x - ax) * dx + (from.y - ay) * dy) / (dx * dx + dy * dy || 1)));
+      const d = Math.hypot(from.x - (ax + dx * t), from.y - (ay + dy * t));
+      if (d < best) {
+        best = d;
+        parent = b.name;
+      }
+    }
+    const names = new Set(doc.bones.map((b) => b.name));
+    let k = 1;
+    while (names.has(`bone_${k}`)) k++;
+    const bone: CustomBone = { name: `bone_${k}`, parent, from, to, physics: false };
+    rerig({ customBones: [...(doc.customBones ?? []), bone], keepMesh: true });
+    setTool('joints');
+  }
+
+  /** Topmost layer whose pixels are under p, else the layer with the nearest vertex. */
+  function pickPart(d: RigDoc, p: Pt): number {
+    for (let i = d.parts.length - 1; i >= 0; i--) {
+      const sp = src?.parts[i];
+      if (!sp) continue;
+      const x = Math.round(p.x - sp.x);
+      const y = Math.round(p.y - sp.y);
+      if (x >= 0 && y >= 0 && x < sp.width && y < sp.height && sp.mask[y * sp.width + x]) return i;
+    }
+    let best = 0;
+    let bd = Infinity;
+    d.parts.forEach((part, i) => {
+      for (let v = 0; v < part.mesh.points.length; v += 2) {
+        const dd = Math.hypot(part.mesh.points[v] - p.x, part.mesh.points[v + 1] - p.y);
+        if (dd < bd) {
+          bd = dd;
+          best = i;
+        }
+      }
+    });
+    return best;
+  }
+
+  function paint(center: Pt, done: boolean) {
+    const d0 = docRef.current;
+    if (!d0 || weightBone == null) return;
+    if (!paintBase.current) {
+      paintBase.current = d0;
+      paintPart.current = pickPart(d0, center);
+    }
+    const r = Math.max(1, brushRadius);
+    const sign = brushSubtract ? -1 : 1;
+    const parts = d0.parts.map((part, pi) => {
+      if (pi !== paintPart.current) return part;
+      let changed = false;
+      const weights = part.weights.map((list, v) => {
+        const d = Math.hypot(part.mesh.points[v * 2] - center.x, part.mesh.points[v * 2 + 1] - center.y);
+        if (d > r) return list;
+        const m = new Map(list);
+        const sel = Math.min(1, Math.max(0, (m.get(weightBone) ?? 0) + brushStrength * 0.35 * (1 - d / r) * sign));
+        const others = [...m].filter(([b]) => b !== weightBone);
+        const rest = others.reduce((s0, [, w]) => s0 + w, 0);
+        if (sel < 1e-3 && rest <= 0) return list;
+        changed = true;
+        const out: [number, number][] = rest > 0 ? others.map(([b, w]) => [b, (w * (1 - sel)) / rest] as [number, number]) : [];
+        out.push([weightBone, rest > 0 ? sel : 1]);
+        const kept = out.filter(([, w]) => w > 0.01).sort((a, b) => b[1] - a[1]).slice(0, 4);
+        const sum = kept.reduce((s0, [, w]) => s0 + w, 0) || 1;
+        return kept.map(([b, w]) => [b, w / sum] as [number, number]);
+      });
+      return changed ? { ...part, weights } : part;
+    });
+    const next = { ...d0, parts };
+    docRef.current = next;
+    if (done) {
+      commit(next, paintBase.current);
+      paintBase.current = null;
+    } else setDocState(next);
   }
 
   // ------------------------------------------------------------------ export
@@ -335,6 +436,17 @@ export function App() {
               onSelectBone={setSelectedBone}
               onJoints={(j, done) => done && rerig({ joints: j, keepMesh: true })}
               onRotate={onRotate}
+              tool={tool}
+              weightBone={weightBone}
+              brushRadius={brushRadius}
+              onAddBone={addBone}
+              onCustomBone={(i, b, done) => {
+                if (!done || !doc) return;
+                const list = [...(doc.customBones ?? [])];
+                list[i] = b;
+                rerig({ customBones: list, keepMesh: true });
+              }}
+              onPaint={paint}
             />
           ) : (
             <div
@@ -394,6 +506,68 @@ export function App() {
 
           {step === 'rig' && doc && (
             <>
+              <h3>Tool</h3>
+              <div className="row seg">
+                {(['joints', 'bone', 'weights'] as RigTool[]).map((t) => (
+                  <button key={t} className={tool === t ? 'on' : ''} onClick={() => {
+                    setTool(t);
+                    if (t === 'weights' && weightBone == null) setWeightBone(doc.bones.findIndex((b) => b.skin));
+                  }}>
+                    {t === 'joints' ? 'Joints' : t === 'bone' ? 'Add bone' : 'Weights'}
+                  </button>
+                ))}
+              </div>
+              {tool === 'bone' && <p className="hint">Drag from where the bone starts to its tip. It is parented to the nearest bone.</p>}
+              {tool === 'weights' && (
+                <>
+                  <label className="field">
+                    Bone
+                    <select value={weightBone ?? ''} onChange={(e) => setWeightBone(Number(e.target.value))}>
+                      {doc.bones.map((b, i) => b.skin && (
+                        <option key={b.name} value={i}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    Radius <output>{brushRadius}px</output>
+                    <input type="range" min={4} max={160} value={brushRadius} onChange={(e) => setBrushRadius(Number(e.target.value))} />
+                  </label>
+                  <label className="field">
+                    Strength <output>{Math.round(brushStrength * 100)}%</output>
+                    <input type="range" min={0.05} max={1} step={0.05} value={brushStrength} onChange={(e) => setBrushStrength(Number(e.target.value))} />
+                  </label>
+                  <label className="check">
+                    <input type="checkbox" checked={brushSubtract} onChange={(e) => setBrushSubtract(e.target.checked)} /> Subtract
+                  </label>
+                  <p className="hint">Red = full influence. Moving joints recomputes weights and discards painting.</p>
+                </>
+              )}
+              {(doc.customBones?.length ?? 0) > 0 && (
+                <>
+                  <h3>Added bones</h3>
+                  <ul className="anim-list">
+                    {doc.customBones!.map((b, i) => (
+                      <li key={b.name}>
+                        <span>
+                          {b.name} <small>← {b.parent}</small>
+                        </span>
+                        <span className="row" style={{ margin: 0 }}>
+                          <label className="check" style={{ margin: 0 }} title="Secondary motion">
+                            <input type="checkbox" checked={b.physics} onChange={(e) => {
+                              const list = [...doc.customBones!];
+                              list[i] = { ...b, physics: e.target.checked };
+                              rerig({ customBones: list, keepMesh: true });
+                            }} /> physics
+                          </label>
+                          <button className="icon" title="Delete" onClick={() => rerig({ customBones: doc.customBones!.filter((_, j) => j !== i), keepMesh: true })}>×</button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
               <h3>Skeleton</h3>
               <label className="field">
                 Template
@@ -605,6 +779,12 @@ export function App() {
               }))
             }
             onDuration={(d) => updateAnim((a) => ({ ...a, duration: d }))}
+            onEase={(ci, ki, ease) =>
+              updateAnim((a) => ({
+                ...a,
+                channels: a.channels.map((c, i) => (i === ci ? { ...c, keys: c.keys.map((k, j) => (j === ki ? { ...k, ease } : k)) } : c)),
+              }))
+            }
             onLoop={(loop) => updateAnim((a) => ({ ...a, loop }))}
           />
         )}

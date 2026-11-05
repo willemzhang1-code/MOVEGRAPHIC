@@ -2,7 +2,8 @@ import { motionLibrary } from '../motions';
 import type { AnimDoc, Part, RigDoc } from '../doc';
 import { buildMesh, type Mesh } from './mesh';
 import { dangles, jointsFromLayers } from './hints';
-import { assignBones, computeWeights, resolveBones, toWorld, type BoneGeom } from './rig';
+import { assignBones, computeWeights, resolveBones, toWorld, type BoneGeom, type CustomBone } from './rig';
+export type { CustomBone } from './rig';
 import type { Source } from './source';
 import { TEMPLATES, type Pt, type TemplateId } from './templates';
 
@@ -28,6 +29,7 @@ export interface RigOptions {
   groups?: Record<string, boolean>;
   /** Reuse meshes (document space), one per part. */
   meshes?: Mesh[];
+  customBones?: CustomBone[];
   animations?: AnimDoc[];
 }
 
@@ -82,7 +84,7 @@ export function buildDoc(src: Source, o: RigOptions): RigDoc {
   const joints = o.joints ?? guess!.joints;
   const groups = o.groups ?? guess?.groups ?? {};
   const spacing = Math.max(5, characterHeight(joints) / (o.density ?? DEFAULT_DENSITY));
-  const bones = resolveBones(t, joints, groups);
+  const bones = resolveBones(t, joints, groups, o.customBones ?? []);
   if (src.parts.length > 1 && o.template === 'humanoid') addDangles(bones, src, joints);
   const allowed = src.parts.length > 1 ? assignBones(src.parts, bones, joints.ground) : [null];
   const parts: Part[] = src.parts.map((sp, i) => {
@@ -97,6 +99,7 @@ export function buildDoc(src: Source, o: RigOptions): RigDoc {
     image: { width: src.width, height: src.height },
     joints,
     groups,
+    customBones: o.customBones ?? [],
     parts,
     pages: src.pages.map((c) => ({ width: c.width, height: c.height })),
     bones,

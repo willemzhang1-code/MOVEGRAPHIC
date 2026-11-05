@@ -20,7 +20,16 @@ export interface BoneGeom {
 export const toWorld = (p: Pt, ground: Pt): Pt => ({ x: p.x - ground.x, y: ground.y - p.y });
 export const toImage = (p: Pt, ground: Pt): Pt => ({ x: p.x + ground.x, y: ground.y - p.y });
 
-export function resolveBones(template: Template, joints: Record<string, Pt>, groups: Record<string, boolean> = {}): BoneGeom[] {
+/** A user-added bone (image space endpoints). */
+export interface CustomBone {
+  name: string;
+  parent: string;
+  from: Pt;
+  to: Pt;
+  physics: boolean;
+}
+
+export function resolveBones(template: Template, joints: Record<string, Pt>, groups: Record<string, boolean> = {}, custom: CustomBone[] = []): BoneGeom[] {
   const ground = joints.ground;
   const out: BoneGeom[] = [];
   const index = new Map<string, number>();
@@ -41,6 +50,22 @@ export function resolveBones(template: Template, joints: Record<string, Pt>, gro
     }
     index.set(def.name, out.length);
     out.push({ name: def.name, parent, x: start.x, y: start.y, rotation, length, skin: def.skin !== false, physics: def.name.startsWith('tail') });
+    index.set(def.name, out.length - 1);
+  }
+  for (const c of custom) {
+    const a = toWorld(c.from, ground);
+    const e = toWorld(c.to, ground);
+    out.push({
+      name: c.name,
+      parent: index.get(c.parent) ?? 0,
+      x: a.x,
+      y: a.y,
+      rotation: (Math.atan2(e.y - a.y, e.x - a.x) * 180) / Math.PI,
+      length: Math.hypot(e.x - a.x, e.y - a.y),
+      skin: true,
+      physics: c.physics,
+    });
+    index.set(c.name, out.length - 1);
   }
   return out;
 }

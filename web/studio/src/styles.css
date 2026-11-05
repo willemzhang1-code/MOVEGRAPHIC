@@ -117,3 +117,11 @@ code { font: 12px ui-monospace, monospace; }
   .panel { border-left: 0; border-top: 1px solid var(--line); }
   .tl-hint { display: none; }
 }
+
+.row.seg { gap: 0; }
+.row.seg button { border-radius: 0; flex: 1; justify-content: center; white-space: nowrap; padding: 6px 8px; }
+.row.seg button:first-child { border-radius: 8px 0 0 8px; }
+.row.seg button:last-child { border-radius: 0 8px 8px 0; }
+.row.seg button + button { border-left: 0; }
+.tl-field button { padding: 2px 8px; font-size: 12px; }
+button.icon { padding: 2px 8px; }
