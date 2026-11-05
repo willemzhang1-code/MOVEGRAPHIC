@@ -1,0 +1,11 @@
+# Cloudflare Worker that serves the site (from the `deploy` branch on GitHub)
+# and /api/keypoints (Workers AI). Deploy after editing tools/worker.js:
+#   npx wrangler login            # once
+#   npx wrangler deploy -c tools/wrangler.toml
+name = "rabbit-studio"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[ai]
+binding = "AI"

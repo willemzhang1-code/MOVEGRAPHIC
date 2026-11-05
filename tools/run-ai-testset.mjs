@@ -6,7 +6,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
-const { chromium } = createRequire(import.meta.url)('playwright');
+// Playwright from web/node_modules (devDependency), a root install (CI) or a global one.
+const req = createRequire(import.meta.url);
+const { chromium } = (() => {
+  for (const from of [path.resolve(import.meta.dirname, '../web/package.json'), import.meta.url]) {
+    try {
+      return createRequire(from)('playwright');
+    } catch {}
+  }
+  return req('playwright');
+})();
 
 const BASE = process.env.BASE ?? 'https://rabbit-studio.willemzhang1.workers.dev';
 const DIR = process.env.DIR ?? 'assets/ai-testset';

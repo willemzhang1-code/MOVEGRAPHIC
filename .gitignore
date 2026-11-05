@@ -14,3 +14,4 @@ unity/com.rabbit.runtime/Plugins/**/*.dylib
 unity/com.rabbit.runtime/Plugins/**/*.a
 unity/tests/**/bin/
 unity/tests/**/obj/
+assets/ai-testset/
