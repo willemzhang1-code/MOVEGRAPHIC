@@ -324,6 +324,9 @@ impl Animation {
         if let Some(e) = self.events.last() {
             max = max.max(e.time);
         }
+        if let Some(&(t, _)) = self.physics_resets.last() {
+            max = max.max(t);
+        }
         if self.duration <= 0.0 {
             self.duration = max;
         }

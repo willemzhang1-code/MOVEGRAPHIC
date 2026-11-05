@@ -10,25 +10,26 @@
 | **M5 协作 + Hub** | 实时多人、版本分支、评论、分享页、资产市场 v1 | 外部团队日常使用 |
 | **M6 扩展** | 视频→动作、文本→动作、Logic 模式完整版、Unreal、Tauri 桌面版 | — |
 
-## M0 已知差异（对照测试前需验证）
+## 已知差异
 
-- IK softness 采用独立推导的指数软限位，数值与 Spine 不同。
-- `noScale` / `noRotationOrReflection` 继承模式为独立推导，非均匀缩放 / 斜切父骨骼下可能有偏差。
 - 旋转混合走最短路径，crossfade 期间不记忆方向（大角度差混合可能翻转）。
 - `AnimationState.apply` 每帧从 setup pose 开始：未被任何动画 key 的属性回到 setup（Spine 会保留上一帧值）。宿主手动覆盖应放在 apply 之后。
-- 未实现：Path / Physics 约束、Clipping、Sequence、`.skel` 二进制、Spine 3.x；Spine 4.3 格式变化未验证。
+- 时间用 f32：帧时间恰好落在 key 上时（如 6×1/60 vs key 0.1）可能与官方 JS 运行时（f64）差一帧。
+- 未实现：`.skel` 二进制、Spine 3.x；Spine 4.3 格式变化未验证；order 不在 [0, n) 的畸形约束（官方会跳过）。
 
-## 官方示例对照（Spine 4.2，20 个，官方 runtime 渲染为基准）
+## 官方示例对照（Spine 4.2，20 个示例 / 105 个动画，官方 spine-webgl 为基准）
 
-本地：`node tools/fetch-spine-examples.mjs` → `cargo run --release -p sinew-core --example compat`（导入/NaN 扫描）→ 开发服务器打开 `/parity/`（与官方 spine-webgl 逐帧对比轮廓 IoU）。
+方法：黑盒系统辨识，不读官方源码。`web/parity/physics.html` 里约 200 个合成用例（物理阶跃/正弦、IK、继承模式、路径约束、曲线）逐帧对比官方输出拟合模型，再对全部示例做**逐骨骼世界矩阵**对照（比轮廓 IoU 严格，排除渲染差异）。
 
-| IoU（越接近 1 越一致） | 示例 |
+本地：`node tools/fetch-spine-examples.mjs` → `npm run dev` → `/parity/physics.html?scan=1&dt=0.0166683`（逐骨骼）或 `/parity/`（轮廓 IoU）。
+
+| 逐骨骼最大误差（位置单位 / 矩阵×100） | 动画数 |
 |---|---|
-| ≥ 0.98 | alien 0.999 · chibi-stickers 0.994 · mix-and-match 0.992 · speedy 0.991 · windmill 0.990 · hero 0.988 · spineboy 0.986 |
-| 0.95 – 0.98 | goblins 0.980 · raptor 0.974 · coin 0.974 · celestial-circus 0.972 · tank 0.970 · owl 0.968 · dragon 0.967 · cloud-pot 0.965 · powerup 0.963 · stretchyman 0.952 |
-| < 0.95 | sack 0.954（最差帧 0.85）· snowglobe 0.946（最差帧 0.84）：物理模型为独立实现，需按黑盒响应拟合；vine 第 0 帧缩放为 0（可忽略，t>0 为 0.95） |
+| < 0.05（与官方一致） | 99 / 105：alien、chibi-stickers、coin、dragon、goblins、hero、mix-and-match、owl、powerup、raptor、snowglobe、speedy、spineboy、stretchyman、vine、windmill 全部动画；cloud-pot、celestial-circus 大部分 |
+| 0.1 – 5 | sack 4 个动画（多级物理 + 非均匀缩放下的累积漂移）、tank shoot 末帧 0.75 |
+| 17 | celestial-circus wind-idle：首帧差 4e-5（f32 精度），被高增益风力物理放大 |
 
-全部 20 个示例导入零警告：Path / Clipping / Sequence / Physics 已实现。
+已拟合到与官方逐帧一致的行为：物理（弹簧/阻尼/惯性/limit/风/重力/referenceScale/reset 时间轴）、贝塞尔 10 段折线、两骨 IK（softness/stretch/子骨偏移/非均匀缩放）、noScale/noScaleOrReflection、路径约束（4 弦长曲线长度、10 弦恒速表、chain 尖端衔接、越界外推）。
 
 ## 当前状态（2026-11-05）
 
@@ -36,7 +37,7 @@
 
 | 模块 | 已完成 | 未完成 |
 |---|---|---|
-| 内核 | 骨骼/5 种继承、Slot/Skin、Region/Mesh/加权/Linked、IK（含非均匀缩放）、Transform、Path、Physics、Clipping、Sequence、多轨混合、事件、Spine 4.2 JSON 导入；官方 20 例对照平均 IoU ≈ 0.97 | 物理黑盒拟合、状态机内核、`.snw` 二进制、Spine `.skel` 导入 |
+| 内核 | 骨骼/5 种继承、Slot/Skin、Region/Mesh/加权/Linked、IK、Transform、Path、Physics、Clipping、Sequence、多轨混合、事件、Spine 4.2 JSON 导入；官方 105 个示例动画中 99 个逐骨骼一致 | 状态机内核、`.snw` 二进制、Spine `.skel` 导入 |
 | Studio | 单图抠图/网格/骨架/权重、分层 PSD（每层网格 + 按图层名推关节）、尾巴/头发/披风自动物理、AI 关节（Workers AI 部位框）、动作库（人形 8 / 四足 5 / 团子 3）、时间轴打关键帧 + 逐 key 缓动（linear/smooth/stepped）、手动加骨（可开物理）、权重笔刷（热力图、按图层限定）、撤销、导出 Spine 4.2 zip + GIF | 改网格、曲线编辑器、状态机编辑、协作 |
 | AI | 部位框 → 关节 | 拆件 + 遮挡补全、视频/文本 → 动作 |
 | 运行时 | Web（WASM + WebGL2）、Godot 4.4+（GDExtension，Godot 4.7 headless 自动测试通过） | Unity / Unreal；Godot 端混合模式、双色 tint |

@@ -140,6 +140,11 @@ export const CASES: ProbeCase[] = [
   { name: 'chain3-rot-inorder', phys: P({ rotate: 1, damping: 0.85, inertia: 0.5, limit: 500 }), tipPhys: P({ rotate: 1, damping: 0.85, inertia: 0.5, limit: 500 }), chain3: [0, 1, 2], bone: { rotation: -70, length: 33 }, drive: { prop: 'translate', keys: [[0, 0, 0], [0.3, 60, 40], [0.6, -30, 0]] } },
   { name: 'rot-own', phys: P({ rotate: 1, damping: 0.85 }), bone: down, drive: { prop: 'rotate', keys: [[0, -90], [0.25, -60]], stepped: true, target: 'phys' } },
   { name: 'rot-own-x', phys: P({ rotate: 1, damping: 0.85 }), bone: { rotation: -90, length: 100, x: 50 }, drive: { prop: 'rotate', keys: [[0, -90], [0.25, -60]], stepped: true, target: 'phys' } },
+  { name: 'frac-rot', phys: P({ rotate: 0.41, damping: 0.85, inertia: 0.5 }), bone: down, drive: sine(30, 1.5, 2), seconds: 2 },
+  { name: 'frac-rot-shear', phys: P({ rotate: 0.41, shearX: 0.16, damping: 0.85, inertia: 0.5 }), bone: down, drive: sine(30, 1.5, 2), seconds: 2 },
+  { name: 'frac-shear', phys: P({ shearX: 0.5, damping: 0.85 }), bone: down, drive: step(50, 0) },
+  { name: 'frac-scale', phys: P({ scaleX: 0.5, rotate: 0.3, damping: 0.85 }), bone: down, drive: step(30, -40) },
+  { name: 'frac-x', phys: P({ x: 0.5, rotate: 0.5, damping: 0.85 }), bone: down, drive: step(50, 0) },
   { name: 'all-base', phys: P({ x: 1, y: 1, rotate: 1, scaleX: 1, shearX: 1 }), bone: down, drive: step(50, 30) },
 ];
 
@@ -148,6 +153,7 @@ export interface RawCase {
   name: string;
   json: Record<string, unknown>;
   seconds?: number;
+  dt?: number;
   skScale?: [number, number];
 }
 
@@ -269,7 +275,77 @@ const pathCases: RawCase[] = [
   { name: 'path-chainscale-scaled', json: pathRig({ rotateMode: 'chainScale', spacingMode: 'length', spacing: 0 }, { bonesScale: 1.3 }) },
 ];
 
+const windRig = (global: boolean, extra: Record<string, unknown> = {}, phys: Record<string, unknown> = {}) => ({
+  skeleton: { spine: '4.2.43' },
+  bones: [{ name: 'root' }, { name: 'parent', parent: 'root', rotation: 50, length: 200 }, { name: 'tip', parent: 'parent', x: 200, rotation: 10, length: 200 }],
+  slots: [],
+  skins: [{ name: 'default', attachments: {} }],
+  physics: [{ name: 'p', bone: 'tip', rotate: 1, limit: 1600, inertia: 0.5, damping: 0.85, ...(global ? { windGlobal: true } : {}), ...phys }],
+  animations: {
+    drive: {
+      physics: { [global ? '' : 'p']: { wind: [{ value: -15.8, curve: [0.256, -15.8, 0.511, -33.3] }, { time: 0.7667, value: -33.3 }] } },
+      ...extra,
+    },
+  },
+});
+
+const skewRig = (phys: Record<string, unknown>, rot = 119) => ({
+  skeleton: { spine: '4.2.43' },
+  bones: [{ name: 'root' }, { name: 'pot', parent: 'root' }, { name: 'leaf', parent: 'pot', rotation: rot, length: 46.7, x: 4, y: 95 }],
+  slots: [],
+  skins: [{ name: 'default', attachments: {} }],
+  physics: [{ name: 'p', bone: 'leaf', limit: 500, inertia: 0.5, strength: 160.5, damping: 0.8367, mass: 4, ...phys }],
+  animations: { drive: { bones: { pot: { scale: [{}, { time: 0.2, y: 0.752 }, { time: 0.4, x: 0.845, y: 1.068 }, { time: 0.6333 }] } } } },
+});
+
+const capeRig = (o: { cy?: number; gOrder?: number; scale?: boolean; pOrder?: number; cOrder?: number } = {}) => ({
+  skeleton: { spine: '4.2.43' },
+  bones: [
+    { name: 'root' },
+    { name: 'mover', parent: 'root' },
+    { name: 'g', parent: 'mover', rotation: -90, x: 98, y: -58 },
+    { name: 'p', parent: 'g', length: 42.31, rotation: -63.43, x: 14.06, y: -15.14 },
+    { name: 'c', parent: 'p', length: 41.78, rotation: -16.13, x: 42.55, y: o.cy ?? 0.48 },
+  ],
+  slots: [],
+  skins: [{ name: 'default', attachments: {} }],
+  physics: [
+    { name: 'pp', order: o.pOrder ?? 0, bone: 'p', rotate: 1, inertia: 0.5, damping: 0.85 },
+    { name: 'pc', order: o.cOrder ?? 1, bone: 'c', rotate: 1, inertia: 0.5, damping: 0.85 },
+    { name: 'pg', order: o.gOrder ?? 2, bone: 'g', x: 1, y: 1, inertia: 0.5, damping: 0.85 },
+  ],
+  animations: {
+    drive: {
+      bones: {
+        mover: {
+          translate: [{ x: 0, y: 0, curve: [0.2, 0, 0.3, 40, 0.2, 0, 0.3, -30] }, { time: 0.5, x: 40, y: -30 }, { time: 1, x: -20, y: 10 }],
+          rotate: [{ value: 0 }, { time: 1, value: 25 }],
+          ...(o.scale ? { scale: [{}, { time: 0.5, x: 1.2, y: 0.9 }, { time: 1 }] } : {}),
+        },
+      },
+    },
+  },
+});
+
 export const RAW: RawCase[] = [
+  { name: 'cape', json: capeRig(), dt: (1 / 60) * 1.0005 },
+  { name: 'cape-cy0', json: capeRig({ cy: 0 }), dt: (1 / 60) * 1.0005 },
+  { name: 'cape-gfirst', json: capeRig({ gOrder: -1 }), dt: (1 / 60) * 1.0005 },
+  { name: 'cape-gfirst0', json: capeRig({ gOrder: 0, pOrder: 1, cOrder: 2 }), dt: (1 / 60) * 1.0005 },
+  { name: 'cape-gonly', json: { ...capeRig({ gOrder: 0 }), physics: [{ name: 'pg', order: 0, bone: 'g', x: 1, y: 1, inertia: 0.5, damping: 0.85 }] }, dt: (1 / 60) * 1.0005 },
+  { name: 'cape-scale', json: capeRig({ scale: true }), dt: (1 / 60) * 1.0005 },
+  { name: 'skew-rot', json: skewRig({ rotate: 1 }) },
+  { name: 'skew-rot-shear', json: skewRig({ rotate: 0.7532, shearX: 0.2468 }) },
+  { name: 'skew-shear', json: skewRig({ shearX: 1 }) },
+  { name: 'skew-scale', json: skewRig({ scaleX: 1 }) },
+  { name: 'skew-x', json: skewRig({ x: 1, y: 1 }) },
+  { name: 'skew-rot-dt', json: skewRig({ rotate: 1 }), dt: (1 / 60) * 1.0005 },
+  { name: 'skew-rot-90', json: skewRig({ rotate: 1 }, 90), dt: (1 / 60) * 1.0005 },
+  { name: 'skew-rot-0', json: skewRig({ rotate: 1 }, 0), dt: (1 / 60) * 1.0005 },
+  { name: 'wind-own', json: windRig(false) },
+  { name: 'wind-global', json: windRig(true) },
+  { name: 'wind-global-moving', json: windRig(true, { bones: { parent: { rotate: [{ value: 0 }, { time: 1, value: 40 }] } } }) },
+  { name: 'wind-static', json: windRig(false, {}, { wind: -15.8 }) },
   ...pathCases,
   { name: 'chibi-leg', json: chibiLeg(true, -5.89) },
   { name: 'chibi-leg-neg', json: chibiLeg(false, -5.89) },
@@ -418,7 +494,7 @@ async function compareExample(rt: SinewRuntime, name: string, animName: string |
   inst.update(0);
   const physBones = new Set(refData.physicsConstraints.map((c) => c.bone.name));
   const report: string[] = [`${name} / ${anim}: physics bones ${[...physBones].join(', ')}`];
-  const DTe = 1 / 60;
+  const DTe = Number(new URLSearchParams(location.search).get('dt') ?? 1 / 60);
   let worstAt = -1;
   for (let f = 0; f < frames; f++) {
     st.update(DTe);
@@ -558,12 +634,13 @@ function runRaw(rt: SinewRuntime, c: RawCase, dump?: { ref: number[][][]; ours: 
   inst.update(0);
   let worst = { err: 0, bone: '', f: -1 };
   const n = Math.round((c.seconds ?? 1) * 60);
+  const dt = c.dt ?? 1 / 60;
   for (let f = 0; f < n; f++) {
-    st.update(1 / 60);
+    st.update(dt);
     st.apply(sk);
-    sk.update(1 / 60);
+    sk.update(dt);
     sk.updateWorldTransform(spine.Physics.update);
-    inst.update(1 / 60);
+    inst.update(dt);
     const w = inst.boneWorld();
     if (dump) {
       dump.ref.push(sk.bones.map((b) => [b.worldX, b.worldY, b.a, b.b, b.c, b.d]));

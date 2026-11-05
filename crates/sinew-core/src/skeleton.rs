@@ -71,6 +71,8 @@ pub struct PhysicsConstraint {
     /// Bone origin and direction (radians) before physics, last frame.
     pub(crate) last_pos: Vec2,
     pub(crate) last_angle: f32,
+    /// Bone length (world-scaled) last frame.
+    pub(crate) last_len: f32,
     pub(crate) last_time: f64,
     /// Simulation time not yet stepped.
     pub(crate) remaining: f64,
@@ -94,6 +96,7 @@ impl PhysicsConstraint {
             started: false,
             last_pos: Vec2::ZERO,
             last_angle: 0.0,
+            last_len: 0.0,
             last_time: 0.0,
             remaining: 0.0,
             offset: Vec2::ZERO,

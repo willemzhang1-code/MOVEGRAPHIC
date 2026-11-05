@@ -592,6 +592,7 @@ pub fn apply_physics(sk: &mut Skeleton, i: usize) {
         c.reset = false;
         c.last_pos = pos;
         c.last_angle = angle;
+        c.last_len = len;
         c.offset = Vec2::ZERO;
         c.velocity = Vec2::ZERO;
         c.rotation = 0.0;
@@ -640,7 +641,7 @@ pub fn apply_physics(sk: &mut Skeleton, i: usize) {
     let turn = (d.rotate + d.shear_x) * mix;
     if len > 0.0 {
         let last_tip_angle = c.last_angle + c.rotation * turn;
-        let last_len = len * (1.0 + c.scale * d.scale_x * mix);
+        let last_len = c.last_len * (1.0 + c.scale * d.scale_x * mix);
         let v = Vec2::new(last_tip_angle.cos() * last_len - moved.x, last_tip_angle.sin() * last_len - moved.y);
         let base = angle + c.rotation * turn;
         let (bc, bs) = (base.cos(), base.sin());
@@ -661,6 +662,7 @@ pub fn apply_physics(sk: &mut Skeleton, i: usize) {
     }
     c.last_pos = pos;
     c.last_angle = angle;
+    c.last_len = len;
 
     apply_physics_offsets(sk, i);
 }
