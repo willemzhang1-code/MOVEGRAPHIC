@@ -52,6 +52,8 @@ for (const f of files) {
       row.panels.push([err ? `AI joints: ${err.slice(0, 60)}` : 'AI joints', await shot()]);
     }
     row.stats = (await page.locator('.panel .stat').first().textContent()) ?? '';
+    const view = await page.locator('.panel .row.seg button.on', { hasText: 'view' }).textContent().catch(() => null);
+    if (view) row.stats = `${view.trim()} · ${row.stats}`;
     const names = await page.$$eval('.panel h3 + .row.wrap button', (bs) => bs.map((b) => b.textContent.trim())).catch(() => []);
     const motion = ['walk', 'run', 'idle', 'bounce'].find((m) => names.includes(m)) ?? names[0];
     if (motion) {

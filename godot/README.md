@@ -24,7 +24,7 @@ Add a `RabbitSkeleton2D` node, set `skeleton_file` (`.json`) and `atlas_file` (`
 
 Signal: `animation_event(name, int_value, float_value, string_value)`.
 
-Godot's y axis points down; skeleton y-up coordinates are flipped by the node. PMA atlases switch the node's material to premultiplied blending.
+Godot's y axis points down; skeleton y-up coordinates are flipped by the node. Each render batch is a child canvas item with a shader for its blend mode (normal, additive, multiply, screen); two-color tint (slot dark color) and premultiplied or straight-alpha atlas pages are handled in the shader.
 
 ## Example and test
 
@@ -35,4 +35,4 @@ godot --headless --path godot/example --import
 godot --headless --path godot/example --script res://test.gd   # prints RABBIT_TEST PASS
 ```
 
-Known gaps: slot blend modes other than normal, two-color tint (dark color).
+Known gap: screen blend is approximated (Godot has no screen blend equation).
