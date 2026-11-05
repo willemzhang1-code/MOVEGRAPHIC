@@ -4,6 +4,8 @@
 
 **在线试用**：[RABBIT Studio](https://rabbit-studio.willemzhang1.workers.dev/studio/) · [Player](https://rabbit-studio.willemzhang1.workers.dev/demo/)
 
+![run](docs/run-demo.gif)
+
 ![M0 player](docs/m0-player.png)
 
 ## 结构
