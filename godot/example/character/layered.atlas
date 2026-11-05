@@ -1,0 +1,22 @@
+layered.png
+size: 1249, 347
+filter: Linear, Linear
+pma: false
+cape
+  bounds: 208, 2, 177, 341
+hair ponytail
+  bounds: 794, 2, 101, 196
+tail
+  bounds: 1084, 2, 163, 98
+arm far
+  bounds: 566, 2, 104, 283
+leg far
+  bounds: 2, 2, 93, 343
+torso
+  bounds: 387, 2, 177, 291
+leg near
+  bounds: 97, 2, 109, 343
+head
+  bounds: 897, 2, 185, 177
+arm near
+  bounds: 672, 2, 120, 283

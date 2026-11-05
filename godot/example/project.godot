@@ -1,0 +1,11 @@
+; RABBIT runtime example for Godot 4.4+
+config_version=5
+
+[application]
+config/name="RABBIT Example"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.4")
+
+[display]
+window/size/viewport_width=960
+window/size/viewport_height=640

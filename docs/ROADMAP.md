@@ -39,4 +39,4 @@
 | 内核 | 骨骼/5 种继承、Slot/Skin、Region/Mesh/加权/Linked、IK（含非均匀缩放）、Transform、Path、Physics、Clipping、Sequence、多轨混合、事件、Spine 4.2 JSON 导入；官方 20 例对照平均 IoU ≈ 0.97 | 物理黑盒拟合、状态机内核、`.snw` 二进制、Spine `.skel` 导入 |
 | Studio | 单图抠图/网格/骨架/权重、分层 PSD（每层网格 + 按图层名推关节）、尾巴/头发/披风自动物理、AI 关节（Workers AI 部位框）、动作库（人形 8 / 四足 5 / 团子 3）、时间轴打关键帧、撤销、导出 Spine 4.2 zip + GIF | 手动建骨/改网格/刷权重、曲线编辑器、状态机编辑、协作 |
 | AI | 部位框 → 关节 | 拆件 + 遮挡补全、视频/文本 → 动作 |
-| 运行时 | Web（WASM + WebGL2） | Godot / Unity / Unreal |
+| 运行时 | Web（WASM + WebGL2）、Godot 4.4+（GDExtension，Godot 4.7 headless 自动测试通过） | Unity / Unreal；Godot 端混合模式、双色 tint |

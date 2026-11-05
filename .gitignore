@@ -5,3 +5,5 @@ web/public/sinew.wasm
 *.log
 web/public/examples/
 .deploy/
+godot/example/bin/
+godot/example/.godot/

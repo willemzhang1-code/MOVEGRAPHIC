@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/sinew-core", "crates/sinew-ffi"]
+members = ["crates/sinew-core", "crates/sinew-ffi", "crates/sinew-godot"]
+default-members = ["crates/sinew-core", "crates/sinew-ffi"]
 resolver = "2"
 
 [workspace.package]
