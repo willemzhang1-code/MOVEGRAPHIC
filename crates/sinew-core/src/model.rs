@@ -539,6 +539,8 @@ pub struct SkeletonData {
     pub name: String,
     pub version: String,
     pub fps: f32,
+    /// Skeleton units per "meter" for physics forces (Spine `referenceScale`; 0 = 100).
+    pub reference_scale: f32,
     pub x: f32,
     pub y: f32,
     pub width: f32,

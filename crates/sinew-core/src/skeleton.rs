@@ -56,17 +56,28 @@ pub struct PathConstraint {
 
 /// Simulation state of a physics constraint. Offsets are applied on top of
 /// the bone's animated world transform.
+///
+/// Model (fitted to the reference runtime's step responses, see
+/// web/parity/physics.html): each channel is a damped spring integrated at a
+/// fixed rate; bone movement feeds it as inertia (the origin lags, the tip
+/// stays where it was drawn).
 #[derive(Clone, Copy, Debug)]
 pub struct PhysicsConstraint {
     pub params: PhysicsParams,
     pub active: bool,
     pub(crate) reset: bool,
-    pub(crate) last: Vec2,
-    pub(crate) accum: f32,
+    /// Has simulated at least once (the step clock is running).
+    pub(crate) started: bool,
+    /// Bone origin and direction (radians) before physics, last frame.
+    pub(crate) last_pos: Vec2,
+    pub(crate) last_angle: f32,
+    pub(crate) last_time: f64,
+    /// Simulation time not yet stepped.
+    pub(crate) remaining: f64,
     /// Translation offset and velocity (world units).
     pub(crate) offset: Vec2,
     pub(crate) velocity: Vec2,
-    /// Rotation offset and velocity (degrees).
+    /// Rotation offset (radians) and velocity.
     pub(crate) rotation: f32,
     pub(crate) rotation_velocity: f32,
     /// Scale offset (fraction) and velocity.
@@ -80,8 +91,11 @@ impl PhysicsConstraint {
             params,
             active: true,
             reset: true,
-            last: Vec2::ZERO,
-            accum: 0.0,
+            started: false,
+            last_pos: Vec2::ZERO,
+            last_angle: 0.0,
+            last_time: 0.0,
+            remaining: 0.0,
             offset: Vec2::ZERO,
             velocity: Vec2::ZERO,
             rotation: 0.0,
@@ -117,8 +131,11 @@ pub struct Skeleton {
     cache: Vec<UpdateItem>,
     children: Vec<Vec<usize>>,
     pub(crate) scratch: Vec<f32>,
-    /// Time the next `update_world` advances physics by.
-    pub(crate) physics_dt: f32,
+    /// Skeleton clock driving physics (seconds).
+    pub(crate) physics_time: f64,
+    /// Whether the current world update simulates physics (otherwise the
+    /// current offsets are only applied).
+    pub(crate) physics_step: bool,
 }
 
 impl Skeleton {
@@ -176,7 +193,8 @@ impl Skeleton {
             cache: Vec::new(),
             children,
             scratch: Vec::new(),
-            physics_dt: 0.0,
+            physics_time: 0.0,
+            physics_step: false,
         };
         sk.update_cache();
         sk.setup_pose();
@@ -425,13 +443,14 @@ impl Skeleton {
             }
         }
         self.cache = cache;
-        self.physics_dt = 0.0;
     }
 
     /// Like `update_world`, also advancing physics simulations by `dt` seconds.
-    pub fn update_world_with_physics(&mut self, dt: f32) {
-        self.physics_dt = dt.max(0.0);
+    pub fn update_world_with_physics(&mut self, dt: f64) {
+        self.physics_time += dt.max(0.0);
+        self.physics_step = true;
         self.update_world();
+        self.physics_step = false;
     }
 
     /// The skeleton's own transform, acting as the root bone's parent.

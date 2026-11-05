@@ -297,6 +297,8 @@ pub struct Animation {
     pub discrete: Vec<DiscreteChannel>,
     /// Sorted by time.
     pub events: Vec<EventKey>,
+    /// Physics reset keys (time, constraint or `PHYSICS_GLOBAL`), sorted by time.
+    pub physics_resets: Vec<(f32, usize)>,
     pub property_ids: HashSet<u64>,
 }
 
@@ -413,6 +415,19 @@ impl Animation {
 
     /// Events in `(last, time]`; `last == None` means "from before the start".
     /// When `time < last` the animation wrapped around.
+    /// Physics constraints to reset for keys crossed in (last, time], with
+    /// the same wrap rules as events.
+    pub fn crossed_resets(&self, last: Option<f32>, time: f32) -> impl Iterator<Item = usize> + '_ {
+        self.physics_resets
+            .iter()
+            .filter(move |(t, _)| match last {
+                None => *t <= time,
+                Some(l) if time >= l => *t > l && *t <= time,
+                Some(l) => *t > l || *t <= time,
+            })
+            .map(|&(_, c)| c)
+    }
+
     pub fn collect_events(&self, last: Option<f32>, time: f32, out: &mut Vec<EventKey>) {
         match last {
             None => out.extend(self.events.iter().filter(|e| e.time <= time).cloned()),

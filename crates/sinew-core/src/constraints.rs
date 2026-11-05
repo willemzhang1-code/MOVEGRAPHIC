@@ -413,90 +413,143 @@ pub fn apply_physics(sk: &mut Skeleton, i: usize) {
     let b = d.bone;
     let w = sk.bones[b].world;
     let pos = w.position();
-    let dt_total = sk.physics_dt;
+    let angle = w.c.atan2(w.a);
+    let data_len = data.bones[b].length;
+    let len = data_len * (w.a * w.a + w.c * w.c).sqrt();
+    let ref_scale = if data.reference_scale > 0.0 { data.reference_scale } else { 100.0 };
+    let (skx, sky) = (sk.scale_x, sk.scale_y);
+    let time = sk.physics_time;
+    let step = sk.physics_step;
     let c = &mut sk.physics[i];
     let p = c.params;
+    if !step {
+        // Pose only: draw the current simulation state.
+        if !c.reset {
+            apply_physics_offsets(sk, i);
+        }
+        return;
+    }
+    if !c.started {
+        c.started = true;
+        c.last_time = time;
+    }
+    let delta = (time - c.last_time).max(0.0);
+    c.last_time = time;
     if c.reset {
+        c.remaining = 0.0;
+    }
+    c.remaining += delta;
+    if c.reset {
+        // Rest at the current pose; this frame's time is simulated next frame.
         c.reset = false;
-        c.last = pos;
-        c.accum = 0.0;
+        c.last_pos = pos;
+        c.last_angle = angle;
         c.offset = Vec2::ZERO;
         c.velocity = Vec2::ZERO;
         c.rotation = 0.0;
         c.rotation_velocity = 0.0;
         c.scale = 0.0;
         c.scale_velocity = 0.0;
+        return;
     }
-    let len = (data.bones[b].length * w.scale_x()).max(1e-3);
-    let sx = w.scale_x().max(1e-6);
-    let dir = Vec2::new(w.a / sx, w.c / sx);
-
-    if dt_total > 0.0 {
-        // Inertia: the simulated bone stays behind when its origin moves.
-        let delta = pos.sub(c.last);
-        c.last = pos;
-        let lag = delta.scale(-p.inertia);
-        c.offset = c.offset.add(lag);
-        c.rotation += (dir.x * lag.y - dir.y * lag.x) / len * RAD_TO_DEG;
-        c.scale += (dir.x * lag.x + dir.y * lag.y) / len;
-
-        let step = 1.0 / d.fps.max(1.0);
-        c.accum = (c.accum + dt_total).min(step * 30.0);
-        let k = p.strength;
-        let damp = p.damping * 2.0 * k.max(0.0).sqrt() * 0.5;
-        let force = Vec2::new(p.wind, -p.gravity);
-        let ext_rot = (dir.x * force.y - dir.y * force.x) / len * RAD_TO_DEG;
-        let ext_scale = (dir.x * force.x + dir.y * force.y) / len;
-        while c.accum >= step {
-            c.accum -= step;
-            let a = c.offset.scale(-k * p.mass_inverse).sub(c.velocity.scale(damp)).add(force.scale(p.mass_inverse));
-            c.velocity = c.velocity.add(a.scale(step));
-            c.offset = c.offset.add(c.velocity.scale(step));
-            let ra = -k * c.rotation * p.mass_inverse - damp * c.rotation_velocity + ext_rot * p.mass_inverse;
-            c.rotation_velocity += ra * step;
-            c.rotation += c.rotation_velocity * step;
-            let sa = -k * c.scale * p.mass_inverse - damp * c.scale_velocity + ext_scale * p.mass_inverse;
-            c.scale_velocity += sa * step;
-            c.scale += c.scale_velocity * step;
-        }
-        let l = c.offset.len();
-        if l > d.limit && l > 0.0 {
-            c.offset = c.offset.scale(d.limit / l);
-            c.velocity = Vec2::ZERO;
-        }
-        c.rotation = c.rotation.clamp(-170.0, 170.0);
-        c.scale = c.scale.clamp(-0.9, 4.0);
-    } else {
-        c.last = pos;
+    let h = 1.0 / (d.fps.max(1.0) as f64);
+    let mut steps = 0u32;
+    while c.remaining >= h {
+        c.remaining -= h;
+        steps += 1;
     }
-
+    if steps > MAX_PHYSICS_STEPS {
+        // Long stall (e.g. a backgrounded tab): don't burn the frame catching up.
+        steps = MAX_PHYSICS_STEPS;
+    }
+    let hf = h as f32;
     let mix = p.mix;
-    let (off, rot, scale) = (c.offset, c.rotation, c.scale);
+    let inertia = p.inertia;
+    let k = p.strength * p.mass_inverse;
+    let gamma = if p.damping >= 1.0 { 1.0 } else { p.damping.max(0.0).powf(60.0 * hf) };
+    // Wind / gravity as acceleration (per unit mass); translation works in skeleton units.
+    let g = Vec2::new(p.wind, -p.gravity).scale(p.mass_inverse);
+    let force = Vec2::new(g.x * ref_scale * skx, g.y * ref_scale * sky);
+
+    // Inertia: the bone's origin stays behind when it moves, by at most
+    // `limit` per second (per axis, in skeleton-scaled units).
+    let lim = (d.limit * delta as f32).abs();
+    let (qx, qy) = (lim * skx.abs(), lim * sky.abs());
+    let mv = pos.sub(c.last_pos);
+    let before = c.offset;
+    c.offset.x -= (mv.x * inertia).clamp(-qx, qx);
+    c.offset.y -= (mv.y * inertia).clamp(-qy, qy);
+    for _ in 0..steps {
+        c.velocity = c.velocity.scale(gamma).add(force.sub(c.offset.scale(k)).scale(hf));
+        c.offset = c.offset.add(c.velocity.scale(hf));
+    }
+
+    // Rotation / scale: the tip drawn last frame stays put while the drawn origin moves.
+    let moved = Vec2::new(
+        (mv.x + (c.offset.x - before.x) * d.x * mix).clamp(-qx, qx),
+        (mv.y + (c.offset.y - before.y) * d.y * mix).clamp(-qy, qy),
+    );
+    let turn = (d.rotate + d.shear_x) * mix;
+    if len > 0.0 {
+        let last_tip_angle = c.last_angle + c.rotation * turn;
+        let last_len = len * (1.0 + c.scale * d.scale_x * mix);
+        let v = Vec2::new(last_tip_angle.cos() * last_len - moved.x, last_tip_angle.sin() * last_len - moved.y);
+        let base = angle + c.rotation * turn;
+        let (bc, bs) = (base.cos(), base.sin());
+        c.rotation += inertia * (bc * v.y - bs * v.x).atan2(bc * v.x + bs * v.y);
+        let dir = angle + c.rotation * turn;
+        c.scale -= inertia * (moved.x * dir.cos() + moved.y * dir.sin()) / len;
+    }
+    for _ in 0..steps {
+        let a = angle + c.rotation;
+        let (ac, as_) = (a.cos(), a.sin());
+        // Gravity / wind torque ignores bone and skeleton scale.
+        let torque = (ac * g.y - as_ * g.x) * data_len / ref_scale;
+        c.rotation_velocity = c.rotation_velocity * gamma + (torque - k * c.rotation) * hf;
+        c.rotation += c.rotation_velocity * hf;
+        let pull = ac * g.x + as_ * g.y;
+        c.scale_velocity = c.scale_velocity * gamma + (pull - k * c.scale) * hf;
+        c.scale += c.scale_velocity * hf;
+    }
+    c.last_pos = pos;
+    c.last_angle = angle;
+
+    apply_physics_offsets(sk, i);
+}
+
+/// Adds a physics constraint's current offsets to its bone's world transform.
+fn apply_physics_offsets(sk: &mut Skeleton, i: usize) {
+    let d = &sk.data.physics[i];
+    let (b, dx, dy, drot, dsx, dsh) = (d.bone, d.x, d.y, d.rotate, d.scale_x, d.shear_x);
+    let c = &sk.physics[i];
+    let mix = c.params.mix;
     if mix == 0.0 {
         return;
     }
+    let (off, rot, scale) = (c.offset, c.rotation, c.scale);
     let mut w = sk.bones[b].world;
-    w.x += off.x * d.x * mix;
-    w.y += off.y * d.y * mix;
-    let r = rot * d.rotate * mix;
+    w.x += off.x * dx * mix;
+    w.y += off.y * dy * mix;
+    let r = rot * drot * mix;
     if r != 0.0 {
-        let rotated = Affine::rotation(r).mul_linear(&w);
+        let rotated = Affine::rotation(r * RAD_TO_DEG).mul_linear(&w);
         w = Affine { x: w.x, y: w.y, ..rotated };
     }
-    let s = 1.0 + scale * d.scale_x * mix;
-    if s != 1.0 {
-        w.a *= s;
-        w.c *= s;
-    }
-    let sh = rot * d.shear_x * mix;
-    if sh != 0.0 {
-        let ry = Affine::rotation(sh).apply_vec(Vec2::new(w.b, w.d));
-        w.b = ry.x;
-        w.d = ry.y;
+    // shearX turns only the X axis; scaleX stretches it.
+    let sh = rot * dsh * mix;
+    let s = 1.0 + scale * dsx * mix;
+    if sh != 0.0 || s != 1.0 {
+        let (cs, sn) = (sh.cos() * s, sh.sin() * s);
+        let (a, c2) = (w.a, w.c);
+        w.a = a * cs - c2 * sn;
+        w.c = a * sn + c2 * cs;
     }
     sk.bones[b].world = w;
     sk.world_to_applied(b);
 }
+
+/// Upper bound on simulation steps per frame.
+const MAX_PHYSICS_STEPS: u32 = 600;
 
 #[cfg(test)]
 mod tests {
@@ -596,45 +649,70 @@ mod tests {
         assert!((sk.bones[1].world.rotation_deg() - 90.0).abs() < 1e-3);
     }
 
-    #[test]
-    fn physics_lags_then_settles() {
+    fn physics_rig(x: f32, rotate: f32, damping: f32) -> Skeleton {
         use crate::model::{PhysicsConstraintData, PhysicsParams};
         let data = SkeletonData {
-            bones: vec![bone("root", None, 0.0, 0.0, 0.0, 0.0), bone("tail", Some(0), 0.0, 0.0, 0.0, 50.0)],
+            bones: vec![bone("root", None, 0.0, 0.0, 0.0, 0.0), bone("tail", Some(0), 0.0, 0.0, -90.0, 100.0)],
             physics: vec![PhysicsConstraintData {
                 name: "p".into(),
                 order: 0,
                 skin_required: false,
                 bone: 1,
-                x: 1.0,
-                y: 1.0,
-                rotate: 1.0,
+                x,
+                y: x,
+                rotate,
                 scale_x: 0.0,
                 shear_x: 0.0,
                 limit: 5000.0,
                 fps: 60.0,
-                params: PhysicsParams { inertia: 1.0, strength: 100.0, damping: 1.0, mass_inverse: 1.0, wind: 0.0, gravity: 0.0, mix: 1.0 },
+                params: PhysicsParams { inertia: 1.0, strength: 100.0, damping, mass_inverse: 1.0, wind: 0.0, gravity: 0.0, mix: 1.0 },
                 global: [false; 7],
             }],
+            reference_scale: 100.0,
             ..Default::default()
         };
-        let mut sk = Skeleton::new(Arc::new(data));
-        sk.update_world_with_physics(1.0 / 60.0);
-        // Move the skeleton right: the simulated bone lags behind and rotates.
-        sk.x = 100.0;
-        sk.update_world_with_physics(1.0 / 60.0);
-        let p = sk.bones[1].world.position();
-        assert!(p.x < 50.0, "should lag, got {p:?}");
-        assert!(sk.physics[0].rotation.abs() < 1e-3, "pure x move along bone: no rotation");
-        // Settles back.
-        for _ in 0..240 {
-            sk.update_world_with_physics(1.0 / 60.0);
+        Skeleton::new(Arc::new(data))
+    }
+
+    // Reference values: step responses recorded from the official runtime
+    // (web/parity/physics.html, cases x-base and rot-base).
+    const DT: f64 = 1.0005 / 60.0;
+
+    #[test]
+    fn physics_translation_step_matches_reference() {
+        let mut sk = physics_rig(1.0, 0.0, 1.0);
+        sk.update_world_with_physics(DT);
+        sk.x = 50.0;
+        for want in [-48.611, -45.872, -41.858, -36.682, -30.487] {
+            sk.update_world_with_physics(DT);
+            let got = sk.bones[1].world.x - 50.0;
+            assert!((got - want).abs() < 2e-3, "offset {got} want {want}");
         }
-        let p = sk.bones[1].world.position();
-        assert!((p.x - 100.0).abs() < 0.5 && p.y.abs() < 0.5, "settled at {p:?}");
-        // Vertical move rotates the bone (tip lags).
-        sk.y = 50.0;
-        sk.update_world_with_physics(1.0 / 60.0);
-        assert!(sk.physics[0].rotation < -1.0, "rotation {}", sk.physics[0].rotation);
+    }
+
+    #[test]
+    fn physics_rotation_step_matches_reference() {
+        let mut sk = physics_rig(0.0, 1.0, 1.0);
+        sk.update_world_with_physics(DT);
+        sk.x = 50.0;
+        for want in [-25.827, -24.372, -22.239, -19.489] {
+            sk.update_world_with_physics(DT);
+            let got = sk.bones[1].world.rotation_deg() + 90.0;
+            assert!((got - want).abs() < 2e-3, "rotation {got} want {want}");
+        }
+    }
+
+    #[test]
+    fn physics_settles_with_damping() {
+        let mut sk = physics_rig(1.0, 1.0, 0.85);
+        sk.update_world_with_physics(DT);
+        sk.x = 40.0;
+        sk.y = 20.0;
+        for _ in 0..600 {
+            sk.update_world_with_physics(DT);
+        }
+        let w = sk.bones[1].world;
+        assert!((w.x - 40.0).abs() < 0.05 && (w.y - 20.0).abs() < 0.05, "settled at {:?}", w.position());
+        assert!((w.rotation_deg() + 90.0).abs() < 0.05);
     }
 }

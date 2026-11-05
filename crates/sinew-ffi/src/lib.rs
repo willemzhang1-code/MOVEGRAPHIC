@@ -317,12 +317,13 @@ pub unsafe extern "C" fn sinew_instance_set_time_scale(i: *mut SinewInstance, ti
 }
 
 /// Advances animation time, poses the skeleton and computes world transforms.
+/// `dt` is f64 so physics stepping sees the host's exact frame time.
 #[no_mangle]
-pub unsafe extern "C" fn sinew_instance_update(i: *mut SinewInstance, dt: f32) {
+pub unsafe extern "C" fn sinew_instance_update(i: *mut SinewInstance, dt: f64) {
     let inst = &mut *i;
-    inst.state.update(dt);
+    inst.state.update(dt as f32);
     inst.state.apply(&mut inst.sk);
-    inst.sk.update_world_with_physics(dt * inst.state.time_scale);
+    inst.sk.update_world_with_physics(dt * inst.state.time_scale as f64);
 }
 
 /// Restarts physics simulations from the current pose (e.g. after a teleport).

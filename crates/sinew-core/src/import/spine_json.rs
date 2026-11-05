@@ -86,6 +86,7 @@ pub fn load_spine_json(text: &str) -> Result<SkeletonData, String> {
         cx.data.width = num(s, "width", 0.0);
         cx.data.height = num(s, "height", 0.0);
         cx.data.fps = num(s, "fps", 30.0);
+        cx.data.reference_scale = num(s, "referenceScale", 100.0);
     }
     let v = cx.data.version.clone();
     if v.starts_with("3.") || v.starts_with("2.") {
@@ -728,7 +729,13 @@ fn read_animation(cx: &mut Ctx, name: &str, a: &Value) -> Result<Animation, Stri
                     "wind" => 4,
                     "gravity" => 5,
                     "mix" => 6,
-                    "reset" => continue,
+                    "reset" => {
+                        for f in frames.as_array().into_iter().flatten() {
+                            anim.physics_resets.push((num(f, "time", 0.0), constraint));
+                        }
+                        anim.physics_resets.sort_by(|a, b| a.0.total_cmp(&b.0));
+                        continue;
+                    }
                     other => {
                         cx.warn(format!("physics timeline '{other}' is not supported yet"));
                         continue;

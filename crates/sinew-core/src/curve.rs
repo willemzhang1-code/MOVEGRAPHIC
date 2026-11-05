@@ -26,47 +26,34 @@ impl Curve {
                 if t1 <= t0 {
                     return v1;
                 }
-                // Clamp control times so x(u) is monotonic.
-                let cx1 = cx1.clamp(t0, t1);
-                let cx2 = cx2.clamp(t0, t1);
-                let u = solve_bezier_x(t, t0, cx1, cx2, t1);
-                cubic(u, v0, cy1, cy2, v1)
+                // The curve is flattened to BEZIER_SEGMENTS lines (uniform in
+                // the curve parameter), as the reference runtimes do; the
+                // exact solve differs by up to ~1.5% of the key delta.
+                let (mut px, mut py) = (t0, v0);
+                for i in 1..=BEZIER_SEGMENTS {
+                    let u = i as f32 / BEZIER_SEGMENTS as f32;
+                    let x = cubic(u, t0, cx1, cx2, t1);
+                    let y = cubic(u, v0, cy1, cy2, v1);
+                    if x >= t {
+                        let dx = x - px;
+                        return if dx > 0.0 { py + (y - py) * (t - px) / dx } else { y };
+                    }
+                    px = x;
+                    py = y;
+                }
+                v1
             }
         }
     }
 }
 
+/// Line segments a bezier key is flattened to.
+const BEZIER_SEGMENTS: u32 = 10;
+
 #[inline]
 fn cubic(u: f32, p0: f32, p1: f32, p2: f32, p3: f32) -> f32 {
     let iu = 1.0 - u;
     iu * iu * iu * p0 + 3.0 * iu * iu * u * p1 + 3.0 * iu * u * u * p2 + u * u * u * p3
-}
-
-#[inline]
-fn cubic_deriv(u: f32, p0: f32, p1: f32, p2: f32, p3: f32) -> f32 {
-    let iu = 1.0 - u;
-    3.0 * iu * iu * (p1 - p0) + 6.0 * iu * u * (p2 - p1) + 3.0 * u * u * (p3 - p2)
-}
-
-/// Finds u in [0, 1] with x(u) == t (x monotonic). Newton with bisection fallback.
-fn solve_bezier_x(t: f32, x0: f32, x1: f32, x2: f32, x3: f32) -> f32 {
-    let (mut lo, mut hi) = (0.0f32, 1.0f32);
-    let mut u = ((t - x0) / (x3 - x0)).clamp(0.0, 1.0);
-    for _ in 0..24 {
-        let x = cubic(u, x0, x1, x2, x3) - t;
-        if x.abs() < 1e-6 {
-            return u;
-        }
-        if x > 0.0 {
-            hi = u;
-        } else {
-            lo = u;
-        }
-        let dx = cubic_deriv(u, x0, x1, x2, x3);
-        let next = if dx.abs() > 1e-6 { u - x / dx } else { -1.0 };
-        u = if next > lo && next < hi { next } else { 0.5 * (lo + hi) };
-    }
-    u
 }
 
 #[cfg(test)]

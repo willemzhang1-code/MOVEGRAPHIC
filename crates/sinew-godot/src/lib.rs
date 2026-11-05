@@ -78,7 +78,7 @@ impl INode2D for RabbitSkeleton2D {
         if let Some(l) = &mut self.loaded {
             l.state.update(dt);
             l.state.apply(&mut l.skeleton);
-            l.skeleton.update_world_with_physics(dt);
+            l.skeleton.update_world_with_physics(delta * self.time_scale as f64);
             for e in l.state.drain_events() {
                 if let StateEventKind::Event(k) = e.kind {
                     fired.push((l.data.events[k.event].name.clone(), k.int, k.float, k.string));

@@ -375,7 +375,7 @@ impl AnimationState {
             anim.apply_discrete(sk, time, MixBlend::Replace);
         }
         anim.apply_curves(sk, time, blend, &|_| alpha);
-        self.fire_events(track, e, anim, time);
+        self.fire_events(track, e, anim, time, sk);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -402,16 +402,25 @@ impl AnimationState {
         }
         anim.apply_curves(sk, time, blend, &|ids| if ids.iter().any(|i| to_props.contains(i)) { hold } else { fade });
         if to_mix < from.event_threshold {
-            self.fire_events(track, from, anim, time);
+            self.fire_events(track, from, anim, time, sk);
         } else {
             if let Some(t) = from.interrupted_at.take() {
-                self.fire_events(track, from, anim, t);
+                self.fire_events(track, from, anim, t, sk);
             }
             from.last_anim_time = Some(time);
         }
     }
 
-    fn fire_events(&mut self, track: usize, e: &mut TrackEntry, anim: &Animation, time: f32) {
+    fn fire_events(&mut self, track: usize, e: &mut TrackEntry, anim: &Animation, time: f32, sk: &mut Skeleton) {
+        if !anim.physics_resets.is_empty() && e.last_anim_time != Some(time) {
+            for c in anim.crossed_resets(e.last_anim_time, time) {
+                if c == crate::animation::PHYSICS_GLOBAL {
+                    sk.reset_physics();
+                } else if let Some(p) = sk.physics.get_mut(c) {
+                    p.reset = true;
+                }
+            }
+        }
         if !anim.events.is_empty() && e.last_anim_time != Some(time) {
             self.scratch.clear();
             anim.collect_events(e.last_anim_time, time, &mut self.scratch);
