@@ -1,0 +1,31 @@
+# Runs the AI test set (docs/AI_TESTSET.md) through the live Studio auto-rig
+# and pushes the contact sheets (not the source images) to the
+# `ai-testset-results` branch for review.
+name: ai-testset
+
+on:
+  push:
+    branches: [main]
+    paths: ['tools/run-ai-testset.mjs', 'tools/ai-testset-urls.txt', '.github/workflows/ai-testset.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm install --no-save --no-package-lock playwright@1.56.1 && npx playwright install --with-deps chromium
+      - run: node tools/fetch-ai-testset.mjs
+      - run: OUT=ai-testset-results node tools/run-ai-testset.mjs
+      - name: Publish contact sheets
+        run: |
+          cd ai-testset-results
+          git init -q -b ai-testset-results
+          git add .
+          git -c user.name="ai-testset" -c user.email="actions@users.noreply.github.com" commit -qm "AI test set run ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" ai-testset-results
